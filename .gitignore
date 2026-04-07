@@ -1,0 +1,9 @@
+videos/
+frames/
+logs/
+index.json
+runner.pid
+stop.flag
+steering.txt
+__pycache__/
+*.pyc

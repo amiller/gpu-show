@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>GPU Show</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0d1117;color:#e6edf3;font:14px/1.5 'JetBrains Mono',Consolas,monospace;padding:16px}
+header{display:flex;align-items:center;gap:14px;margin-bottom:16px;flex-wrap:wrap}
+h1{font-size:18px;color:#58a6ff}
+.dot{width:10px;height:10px;border-radius:50%;background:#666;display:inline-block;margin-right:6px}
+.dot.live{background:#3fb950;box-shadow:0 0 8px #3fb950}
+.btn{background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:6px 16px;border-radius:6px;cursor:pointer;font:13px monospace}
+.btn:hover{background:#30363d}
+.btn.go{background:#238636;border-color:#2ea043}
+.btn.stop{background:#a40e26;border-color:#da3633}
+.status{color:#8b949e;font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:14px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden}
+.card video{width:100%;display:block;background:#000}
+.meta{padding:10px 12px;font-size:12px}
+.meta .name{font-size:14px;color:#58a6ff;font-weight:bold;margin-bottom:4px}
+.meta .stats{color:#8b949e;display:flex;gap:10px;flex-wrap:wrap}
+.meta .pass{color:#3fb950}
+.meta .fail{color:#f85149}
+.meta .actions{margin-top:6px;color:#6e7681;font-size:11px;max-height:60px;overflow-y:auto}
+.meta .actions div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meta .spec{color:#8b949e;font-size:11px;margin:4px 0 6px;font-style:italic;line-height:1.4;max-height:48px;overflow:hidden}
+.empty{color:#6e7681;text-align:center;padding:60px}
+.logs{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px;margin-top:14px;font-size:11px;color:#8b949e;max-height:160px;overflow-y:auto;display:none}
+.logs.show{display:block}
+.steer{display:flex;align-items:center;gap:8px;margin-bottom:14px;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:8px 12px}
+.steer label{color:#8b949e;font-size:12px}
+.steer input{flex:1;background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:6px 10px;border-radius:6px;font:13px monospace;outline:none}
+.steer input:focus{border-color:#58a6ff}
+</style>
+</head>
+<body>
+<header>
+  <h1>GPU Show</h1>
+  <span><span id="dot" class="dot"></span><span id="state" class="status">unknown</span></span>
+  <button id="startBtn" class="btn go" onclick="start()">Start</button>
+  <button id="stopBtn" class="btn stop" onclick="stop()">Stop</button>
+  <button class="btn" onclick="clearAll()">Clear</button>
+  <button class="btn" onclick="toggleLogs()">Logs</button>
+  <span class="status">model:</span>
+  <select id="modelSel" class="btn" onchange="switchModel()"></select>
+  <span class="status">show:</span>
+  <select id="limitSel" class="btn" onchange="refresh()">
+    <option value="4">last 4</option>
+    <option value="8">last 8</option>
+    <option value="16">last 16</option>
+    <option value="50">all (50)</option>
+  </select>
+  <span id="counter" class="status"></span>
+</header>
+<div class="steer">
+  <label>steer:</label>
+  <input id="steerInput" type="text" placeholder="e.g. underwater bioluminescence, retro arcade, MC Escher tessellations…" maxlength="500">
+  <button class="btn" onclick="saveSteering()">Save</button>
+  <button class="btn" onclick="clearSteering()">Clear</button>
+  <span id="steerStatus" class="status"></span>
+</div>
+<div id="logs" class="logs"></div>
+<div id="grid" class="grid"></div>
+
+<script>
+async function api(path, method='GET') {
+  const r = await fetch(path, {method});
+  return r.json();
+}
+
+async function refresh() {
+  const s = await api('/api/status');
+  document.getElementById('dot').className = 'dot' + (s.running ? ' live' : '');
+  document.getElementById('state').textContent = s.running ? `running (pid ${s.pid})` : 'idle';
+
+  const v = await api('/api/videos');
+  const grid = document.getElementById('grid');
+  const limit = parseInt(document.getElementById('limitSel').value);
+  document.getElementById('counter').textContent = `${v.videos.length} stored`;
+  if (!v.videos.length) {
+    grid.innerHTML = '<div class="empty">No videos yet — click Start to begin.</div>';
+    return;
+  }
+  grid.innerHTML = v.videos.slice(0, limit).map(item => {
+    const date = new Date(item.ts*1000).toLocaleTimeString();
+    const cls = item.passed ? 'pass' : 'fail';
+    const tag = item.passed ? 'PASS' : 'FAIL';
+    const title = item.title || item.name || '?';
+    const acts = (item.actions || []).map(a => `<div>$ ${escapeHtml(a)}</div>`).join('');
+    const video = item.video
+      ? `<video src="/videos/${item.video}" autoplay loop muted playsinline></video>`
+      : '<div style="padding:40px;text-align:center;color:#6e7681">no render</div>';
+    const spec = item.spec ? `<div class="spec">${escapeHtml(item.spec)}</div>` : '';
+    return `<div class="card">
+      ${video}
+      <div class="meta">
+        <div class="name">${escapeHtml(title)} <span class="${cls}">[${tag}]</span></div>
+        ${spec}
+        <div class="stats">
+          <span>${item.elapsed}s</span>
+          <span>${item.tool_calls} calls</span>
+          <span>${item.errors} errs</span>
+          <span>${item.n_frames || 0}f</span>
+          <span>${date}</span>
+        </div>
+        <div class="actions">${acts}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function start() { await api('/api/start', 'POST'); refresh(); }
+async function stop() { await api('/api/stop', 'POST'); refresh(); }
+async function clearAll() { await api('/api/clear', 'POST'); refresh(); }
+
+async function loadSteering() {
+  const r = await api('/api/steering');
+  document.getElementById('steerInput').value = r.text || '';
+  document.getElementById('steerStatus').textContent = r.text ? 'active' : '';
+}
+
+async function saveSteering() {
+  const text = document.getElementById('steerInput').value;
+  const st = document.getElementById('steerStatus');
+  st.textContent = 'saving...';
+  await fetch('/api/steering', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({text})});
+  st.textContent = text.trim() ? 'active — applies to next task' : 'cleared';
+  setTimeout(() => { if (text.trim()) st.textContent = 'active'; else st.textContent = ''; }, 3000);
+}
+
+async function clearSteering() {
+  document.getElementById('steerInput').value = '';
+  await saveSteering();
+}
+
+async function loadModels() {
+  const m = await api('/api/models');
+  const sel = document.getElementById('modelSel');
+  sel.innerHTML = m.models.map(x =>
+    `<option value="${x.id}" ${x.id===m.current?'selected':''}>${x.label}</option>`
+  ).join('');
+  sel.dataset.current = m.current || '';
+}
+
+async function switchModel() {
+  const sel = document.getElementById('modelSel');
+  const target = sel.value;
+  if (target === sel.dataset.current) return;
+  sel.disabled = true;
+  const orig = sel.options[sel.selectedIndex].textContent;
+  sel.options[sel.selectedIndex].textContent = '⏳ switching...';
+  try {
+    await fetch(`/api/model/${target}`, {method:'POST'});
+  } finally {
+    sel.options[sel.selectedIndex].textContent = orig;
+    sel.disabled = false;
+    loadModels();
+  }
+}
+
+async function refreshLogs() {
+  const l = await api('/api/logs');
+  document.getElementById('logs').innerHTML = l.lines.map(escapeHtml).join('<br>');
+}
+
+function toggleLogs() {
+  const el = document.getElementById('logs');
+  el.classList.toggle('show');
+  if (el.classList.contains('show')) refreshLogs();
+}
+
+loadModels();
+loadSteering();
+refresh();
+setInterval(refresh, 4000);
+setInterval(loadModels, 10000);
+setInterval(() => {
+  if (document.getElementById('logs').classList.contains('show')) refreshLogs();
+}, 4000);
+</script>
+</body>
+</html>

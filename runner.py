@@ -17,6 +17,7 @@ INDEX = f"{ROOT}/index.json"
 PIDFILE = f"{ROOT}/runner.pid"
 STOP = f"{ROOT}/stop.flag"
 STEERING = f"{ROOT}/steering.txt"
+STATE = f"{ROOT}/state.json"
 
 API_URL = os.environ.get("LLAMA_URL", "http://10.141.207.1:8084")
 
@@ -60,8 +61,15 @@ def read_steering():
     s = open(STEERING).read().strip()
     return s
 
+def write_state(stage, **kwargs):
+    """Publish current runner state for the UI to poll."""
+    try:
+        with open(STATE, "w") as f:
+            json.dump({"stage": stage, "ts": int(time.time()), **kwargs}, f)
+    except Exception: pass
+
 def generate_task():
-    """Ask the LLM to invent a new task. Returns (title, spec)."""
+    """Ask the LLM to invent a new task. Returns (title, spec, steering_used)."""
     recent = get_recent_titles()
     recent_str = ", ".join(f'"{t}"' for t in recent) if recent else "(none yet)"
     steer = read_steering()
@@ -77,7 +85,7 @@ def generate_task():
         elif line.upper().startswith("SPEC:"):
             spec = line.split(":", 1)[1].strip()
     title = title[:60] or "untitled"
-    return title, spec
+    return title, spec, steer
 
 def slug(s):
     return "".join(c.lower() if c.isalnum() else "_" for c in s)[:40].strip("_")
@@ -216,6 +224,7 @@ def append_index(result, video, model):
     idx = json.loads(open(INDEX).read()) if os.path.exists(INDEX) else {"videos": []}
     idx["videos"].insert(0, {
         "ts": result["ts"], "title": result["title"], "spec": result.get("spec", "")[:300],
+        "steering": result.get("steering", ""),
         "video": os.path.basename(video) if video else None,
         "passed": video is not None, "tool_calls": result["tool_calls"],
         "errors": result["errors"], "elapsed": round(result["elapsed"], 1),
@@ -235,11 +244,13 @@ def main():
     signal.signal(signal.SIGINT, cleanup)
 
     print(f"[runner] up, pid={os.getpid()}", flush=True)
+    write_state("idle")
     while True:
         if os.path.exists(STOP):
             print("[runner] stop flag, exiting", flush=True)
+            write_state("stopped")
             cleanup()
-        # Wait for llama-server to be healthy (handles model swaps)
+        write_state("waiting_for_model")
         ok = False
         for _ in range(60):
             if os.path.exists(STOP): cleanup()
@@ -253,16 +264,24 @@ def main():
             time.sleep(3); continue
         try:
             model = get_model_name()
-            print(f"[gen] generating prompt... (model={model})", flush=True)
-            title, spec = generate_task()
+            steer_now = read_steering()
+            write_state("generating", model=model, steering=steer_now)
+            print(f"[gen] generating prompt... (model={model}, steer={steer_now!r})", flush=True)
+            title, spec, steering_used = generate_task()
             print(f"[gen] {title} :: {spec[:120]}", flush=True)
+            write_state("executing", model=model, title=title, spec=spec[:200], steering=steering_used)
             result = execute_task(title, spec)
+            result["steering"] = steering_used
+            write_state("encoding", model=model, title=title, steering=steering_used,
+                        n_frames=result["n_frames"])
             video = make_video(result, model)
             append_index(result, video, model)
             print(f"[done] {title} pass={video is not None} {result['elapsed']:.0f}s frames={result['n_frames']}", flush=True)
+            write_state("idle", last_title=title, last_passed=video is not None)
         except Exception as e:
             import traceback
             print(f"[error] {e}\n{traceback.format_exc()}", flush=True)
+            write_state("error", error=str(e)[:200])
         time.sleep(2)
 
 if __name__ == "__main__":

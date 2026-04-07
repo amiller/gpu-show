@@ -29,10 +29,22 @@ h1{font-size:18px;color:#58a6ff}
 .empty{color:#6e7681;text-align:center;padding:60px}
 .logs{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px;margin-top:14px;font-size:11px;color:#8b949e;max-height:160px;overflow-y:auto;display:none}
 .logs.show{display:block}
-.steer{display:flex;align-items:center;gap:8px;margin-bottom:14px;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:8px 12px}
+.steer{display:flex;align-items:center;gap:8px;margin-bottom:10px;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:8px 12px}
+.steer.active{border-color:#bc8cff;box-shadow:0 0 0 1px #bc8cff inset}
 .steer label{color:#8b949e;font-size:12px}
 .steer input{flex:1;background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:6px 10px;border-radius:6px;font:13px monospace;outline:none}
 .steer input:focus{border-color:#58a6ff}
+.steer.active label{color:#bc8cff}
+.live{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:12px;color:#8b949e;display:flex;gap:14px;align-items:center;flex-wrap:wrap;min-height:34px}
+.live .stage{font-weight:bold;color:#58a6ff;text-transform:uppercase;font-size:11px;letter-spacing:0.5px}
+.live .stage.gen{color:#bc8cff}
+.live .stage.exec{color:#3fb950}
+.live .stage.enc{color:#d29922}
+.live .stage.idle{color:#6e7681}
+.live .stage.err{color:#f85149}
+.live .pill{background:#0d1117;border:1px solid #30363d;border-radius:12px;padding:2px 10px;font-size:11px}
+.live .pill.steer-pill{border-color:#bc8cff;color:#bc8cff}
+.meta .steer-chip{display:inline-block;background:#0d1117;border:1px solid #bc8cff;color:#bc8cff;font-size:10px;padding:1px 8px;border-radius:10px;margin-top:4px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
 </style>
 </head>
 <body>
@@ -55,12 +67,12 @@ h1{font-size:18px;color:#58a6ff}
   <span id="counter" class="status"></span>
 </header>
 <div class="steer">
-  <label>steer:</label>
-  <input id="steerInput" type="text" placeholder="e.g. underwater bioluminescence, retro arcade, MC Escher tessellations…" maxlength="500">
-  <button class="btn" onclick="saveSteering()">Save</button>
-  <button class="btn" onclick="clearSteering()">Clear</button>
+  <label>steer next prompt:</label>
+  <input id="steerInput" type="text" placeholder="e.g. underwater bioluminescence, retro arcade, MC Escher tessellations… (auto-saves)" maxlength="500" oninput="onSteerInput()">
+  <button class="btn" onclick="clearSteering()">×</button>
   <span id="steerStatus" class="status"></span>
 </div>
+<div id="liveState" class="live"></div>
 <div id="logs" class="logs"></div>
 <div id="grid" class="grid"></div>
 
@@ -74,6 +86,7 @@ async function refresh() {
   const s = await api('/api/status');
   document.getElementById('dot').className = 'dot' + (s.running ? ' live' : '');
   document.getElementById('state').textContent = s.running ? `running (pid ${s.pid})` : 'idle';
+  renderLive(s);
 
   const v = await api('/api/videos');
   const grid = document.getElementById('grid');
@@ -93,10 +106,12 @@ async function refresh() {
       ? `<video src="/videos/${item.video}" autoplay loop muted playsinline></video>`
       : '<div style="padding:40px;text-align:center;color:#6e7681">no render</div>';
     const spec = item.spec ? `<div class="spec">${escapeHtml(item.spec)}</div>` : '';
+    const steerChip = item.steering ? `<div><span class="steer-chip" title="steered toward: ${escapeHtml(item.steering)}">↗ ${escapeHtml(item.steering)}</span></div>` : '';
     return `<div class="card">
       ${video}
       <div class="meta">
         <div class="name">${escapeHtml(title)} <span class="${cls}">[${tag}]</span></div>
+        ${steerChip}
         ${spec}
         <div class="stats">
           <span>${item.elapsed}s</span>
@@ -111,6 +126,36 @@ async function refresh() {
   }).join('');
 }
 
+function renderLive(s) {
+  const el = document.getElementById('liveState');
+  if (!s.running) {
+    el.innerHTML = '<span class="stage idle">runner stopped</span>';
+    return;
+  }
+  const st = s.state || {};
+  const stage = st.stage || 'idle';
+  const stageClass = {
+    'generating': 'gen', 'executing': 'exec', 'encoding': 'enc',
+    'idle': 'idle', 'waiting_for_model': 'idle', 'error': 'err', 'stopped': 'idle'
+  }[stage] || 'idle';
+  const stageLabel = {
+    'generating': '🧠 inventing prompt',
+    'executing': '⚙️ running task',
+    'encoding': '🎬 encoding video',
+    'waiting_for_model': '⏳ waiting for model',
+    'idle': '✓ ready for next',
+    'stopped': 'stopped',
+    'error': '⚠ error',
+  }[stage] || stage;
+  let extras = '';
+  if (st.title) extras += `<span class="pill">${escapeHtml(st.title)}</span>`;
+  if (st.steering) extras += `<span class="pill steer-pill">↗ ${escapeHtml(st.steering)}</span>`;
+  if (st.model) extras += `<span class="pill">${escapeHtml(st.model)}</span>`;
+  if (st.n_frames) extras += `<span class="pill">${st.n_frames} frames</span>`;
+  if (st.error) extras += `<span class="pill" style="color:#f85149">${escapeHtml(st.error)}</span>`;
+  el.innerHTML = `<span class="stage ${stageClass}">${stageLabel}</span>${extras}`;
+}
+
 function escapeHtml(s) {
   return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
@@ -119,20 +164,39 @@ async function start() { await api('/api/start', 'POST'); refresh(); }
 async function stop() { await api('/api/stop', 'POST'); refresh(); }
 async function clearAll() { await api('/api/clear', 'POST'); refresh(); }
 
+function setSteerVisual(text, label) {
+  const box = document.querySelector('.steer');
+  const st = document.getElementById('steerStatus');
+  if (text.trim()) {
+    box.classList.add('active');
+    st.textContent = label || '↗ active — applies to NEXT new prompt';
+  } else {
+    box.classList.remove('active');
+    st.textContent = label || '';
+  }
+}
+
 async function loadSteering() {
   const r = await api('/api/steering');
-  document.getElementById('steerInput').value = r.text || '';
-  document.getElementById('steerStatus').textContent = r.text ? 'active' : '';
+  const inp = document.getElementById('steerInput');
+  if (document.activeElement !== inp) inp.value = r.text || '';
+  setSteerVisual(r.text || '');
+}
+
+let steerTimer = null;
+function onSteerInput() {
+  if (steerTimer) clearTimeout(steerTimer);
+  setSteerVisual(document.getElementById('steerInput').value, 'typing…');
+  steerTimer = setTimeout(saveSteering, 600);
 }
 
 async function saveSteering() {
   const text = document.getElementById('steerInput').value;
-  const st = document.getElementById('steerStatus');
-  st.textContent = 'saving...';
+  setSteerVisual(text, 'saving…');
   await fetch('/api/steering', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({text})});
-  st.textContent = text.trim() ? 'active — applies to next task' : 'cleared';
-  setTimeout(() => { if (text.trim()) st.textContent = 'active'; else st.textContent = ''; }, 3000);
+  setSteerVisual(text, text.trim() ? '✓ saved — applies to next NEW prompt' : '✓ cleared');
+  setTimeout(() => setSteerVisual(text), 2500);
 }
 
 async function clearSteering() {

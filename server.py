@@ -14,6 +14,7 @@ INDEX = ROOT / "index.json"
 PIDFILE = ROOT / "runner.pid"
 STOP = ROOT / "stop.flag"
 STEERING = ROOT / "steering.txt"
+STATE = ROOT / "state.json"
 RUNNER = ROOT / "runner.py"
 LLAMA_BIN = "/home/amiller/installing/ollama/llama.cpp-master/build/bin/llama-server"
 NVME = "/media/amiller/fractal-nvme2/gguf-models"
@@ -87,7 +88,11 @@ async def index(request):
 
 async def api_status(request):
     pid = runner_pid()
-    return JSONResponse({"running": pid is not None, "pid": pid})
+    state = {}
+    if STATE.exists():
+        try: state = json.loads(STATE.read_text())
+        except Exception: state = {}
+    return JSONResponse({"running": pid is not None, "pid": pid, "state": state})
 
 async def api_videos(request):
     if INDEX.exists():

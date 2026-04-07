@@ -7,6 +7,11 @@ is ffmpeg'd into an mp4 you can watch in a web UI.
 It exists because watching an LLM's GPU sit at 0% is sad, and watching it
 generate weird little fractals is not.
 
+![sample: "Pulsating Crystalline Voronoi Bloom" — Gemma 4 26B-A4B](docs/sample.gif)
+
+> *"Pulsating Crystalline Voronoi Bloom"* — invented and rendered by Gemma 4 26B-A4B
+> in a fresh sandbox in ~80s.
+
 ## Workflow
 
 ```
@@ -74,14 +79,25 @@ The steering box appends a soft nudge to the meta-prompt:
 > The user is currently steering toward this theme/aesthetic (treat as a soft
 > nudge, NOT a hard requirement — keep variety): **{your text}**
 
-It influences the *next* generated task. Examples:
+It influences the *next* generated task — not anything currently executing or
+encoding. Examples:
 
 - `underwater bioluminescence, slow drifting`
 - `MC Escher tessellations`
 - `8-bit retro CRT effects`
 - `cellular automata, black and white`
 
-Stored in `steering.txt`. Empty string clears it.
+**UX:**
+
+- Auto-saves 600ms after you stop typing — no Save button.
+- The input border turns purple while steering is active.
+- The live state row shows the steering as a purple pill while it's being applied.
+- Each video card carries a `↗ {steering text}` chip showing what (if any)
+  steering was active when *that* task was generated. Scroll the grid to see
+  the cause-and-effect.
+- Clear with the `×` button or by emptying the input.
+
+Stored in `steering.txt`.
 
 ## File layout
 
@@ -93,6 +109,7 @@ gpu-show/
 ├── index.html       # single-page UI (no build step)
 ├── index.json       # video metadata (capped at 50)
 ├── steering.txt     # current steering text (auto-managed)
+├── state.json       # runner's live state (stage/title/steering/...)
 ├── runner.pid       # present iff runner alive
 ├── stop.flag        # graceful stop signal (deleted on start)
 ├── frames/          # raw PNG frames per task
@@ -118,6 +135,7 @@ them out if disk fills up.
 | POST   | `/api/model/{id}` | switch llama-server to a different model |
 | GET    | `/api/steering`   | current steering text |
 | POST   | `/api/steering`   | `{text: "..."}` (empty clears) |
+| GET    | `/api/status`     | runner alive + live state.json (stage, title, model, steering, n_frames) |
 | GET    | `/videos/<file>`  | static mp4 |
 
 ## Adding a model

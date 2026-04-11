@@ -55,7 +55,7 @@ h1{font-size:18px;color:#58a6ff}
 .modal-row.check{display:flex;align-items:center;gap:10px}
 .modal-row.check label{color:#e6edf3;font-size:13px;margin:0}
 .modal-row.check input{width:16px;height:16px;cursor:pointer}
-.modal-row textarea{width:100%;background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:8px 10px;border-radius:6px;font:12px monospace;outline:none;resize:vertical;min-height:90px}
+.modal-row textarea{width:100%;background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:8px 10px;border-radius:6px;font:12px monospace;outline:none;resize:vertical;min-height:180px;line-height:1.5}
 .modal-row textarea:focus{border-color:#58a6ff}
 .modal-row .hint{color:#6e7681;font-size:11px;margin-top:4px;display:block}
 body.fullscreen{padding:6px}
@@ -104,8 +104,11 @@ body.fullscreen .fs-exit{display:block}
     </div>
     <div class="modal-row">
       <label>System prompt — added as a system message to every model call. Leave blank for none.</label>
-      <textarea id="sysPromptInput" placeholder="e.g. You are a creative coder who specializes in dreamlike, slightly unsettling visuals. Favor unusual color palettes." oninput="onSysPromptInput()"></textarea>
-      <span id="sysPromptStatus" class="hint"></span>
+      <textarea id="sysPromptInput" oninput="onSysPromptInput()"></textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+        <span id="sysPromptStatus" class="hint"></span>
+        <button class="btn" onclick="resetSysPrompt()" style="font-size:11px">↺ reset to default</button>
+      </div>
     </div>
     <div class="modal-row">
       <span class="hint">Tip: press ESC to close this menu, or to exit fullscreen.</span>
@@ -119,6 +122,12 @@ const KEY_ENTRIES = "gpushow_shaders_entries";
 const KEY_STEERING = "gpushow_shaders_steering";
 const KEY_SYSPROMPT = "gpushow_shaders_sysprompt";
 const KEY_FULLSCREEN = "gpushow_shaders_fullscreen";
+
+const DEFAULT_SYSPROMPT = `You are a fragment shader artist with a taste for visually striking, structurally bold, technically interesting work. You hate lazy outputs: smooth perlin/simplex color noise, generic sin+cos blob fields, default voronoi without a twist, anything that looks like a screensaver.
+
+Reach for techniques that have specific structure: raymarched SDFs, hard geometric primitives with crisp edges, domain warping, polar / log-polar / kaleidoscopic mappings, restricted unexpected palettes, hard quantization and posterization, layered bands, lattice patterns, cellular structures with visible rules, glitch effects, halftone, dithering, voxel-style grids, signed distance composition.
+
+Prefer compositions where something specific is happening over ambient ripples. Make every piece feel deliberate, not generative-art-default.`;
 const CAP = 50;
 const RES = 256;
 const MAX_RETRIES = 3;
@@ -519,6 +528,10 @@ function saveSysPrompt() {
   st.textContent = text.trim() ? "✓ saved — applies to next model call" : "✓ cleared";
   setTimeout(() => { st.textContent = ""; }, 2500);
 }
+function resetSysPrompt() {
+  document.getElementById("sysPromptInput").value = DEFAULT_SYSPROMPT;
+  saveSysPrompt();
+}
 
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
@@ -527,6 +540,7 @@ document.addEventListener("keydown", (e) => {
   if (document.body.classList.contains("fullscreen")) setFullscreen(false);
 });
 
+if (localStorage.getItem(KEY_SYSPROMPT) === null) localStorage.setItem(KEY_SYSPROMPT, DEFAULT_SYSPROMPT);
 if (localStorage.getItem(KEY_FULLSCREEN)) setFullscreen(true);
 document.getElementById("steerInput").value = localStorage.getItem(KEY_STEERING) || "";
 setSteerVisual(document.getElementById("steerInput").value);

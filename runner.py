@@ -7,7 +7,7 @@ Each iteration:
 4. ffmpeg's frames into an mp4 with title overlay
 5. Updates index
 """
-import json, time, os, sys, signal, subprocess, urllib.request
+import json, time, os, sys, signal, subprocess, urllib.request, random
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 VIDEOS = f"{ROOT}/videos"
@@ -26,23 +26,51 @@ TOOLS = [{"type": "function", "function": {
     "parameters": {"type": "object", "properties": {
         "command": {"type": "string"}}, "required": ["command"]}}}]
 
-META_PROMPT = """Invent a fresh creative animated rendering task. It should be visually striking and produce a SHORT 2-second animation as 60 PNG frames.
+DOMAIN_PROMPT = """Name one specific subject, phenomenon, or concept from ANY field of human knowledge. Be surprising — don't default to math, fractals, or physics. Could be from history, cooking, sports, law, fashion, plumbing, anything.
 
-Constraints:
-- Implementable in Python with pip-installable libraries (numpy, Pillow, matplotlib, scipy, PyOpenGL+osmesa, perlin-noise, noise)
-- Frames at least 384x384, 60 of them, each different (animation evolves smoothly)
-- Should be ~2 seconds of motion at 30fps
-- Visually distinctive — generative art, particle systems, fluid sims, fractals zooming, math visualizations, procedural patterns, agent-based, cellular automata, attractors, flow fields, anything cool
+Reply with ONLY the concept in 2-6 words. Nothing else."""
 
-DO NOT REPEAT recent tasks: {recent}
-{steering}
-Reply with EXACTLY this format and nothing else:
-TITLE: <3-6 word title>
-SPEC: <one paragraph describing what to render — colors, motion, math, structure>"""
+LENSES = [
+    "microscopic close-up", "field-guide illustration", "museum vitrine lighting",
+    "19th-century scientific plate", "thermal camera", "x-ray film",
+    "topographic contour map", "isometric cutaway", "anatomical cross-section",
+    "annotated schematic", "VHS tracking artifacts", "silhouette and negative space",
+    "translucent layered glass", "timelapse compression", "cyanotype print",
+    "stained-glass palette", "risograph overprint", "shadow puppet theater",
+    "liquid mercury surface", "woven textile", "sumi-e ink wash",
+    "false-color ultraviolet", "oscilloscope trace", "infographic",
+    "daguerreotype", "embossed metal plate", "chalk on blackboard",
+    "neon on wet asphalt", "woodblock print", "dot-matrix printout",
+]
 
-def chat(messages, max_tokens=12000, with_tools=True):
+FRAMINGS = [
+    "You are a creative director assigning the next piece in a visual show.",
+    "A museum curator commissions a 2-second exhibit loop. Pitch it.",
+    "A scientific illustrator is producing a tiny motion study.",
+    "You are an animator making a 2-second title card for a film festival.",
+    "A demoscene coder needs a concept for a 2-second loop.",
+    "You are writing the next entry in an ongoing visual diary.",
+    "An art teacher gives a studio prompt to generative-art students.",
+    "A data artist wants to turn a mundane dataset into something beautiful.",
+    "A nature documentarian needs a 2-second interstitial animation.",
+    "You are designing the boot screen for a fictional operating system.",
+]
+
+def build_meta_prompt(domain, lens, framing, recent_str, steering):
+    p = f"{framing}\n\n"
+    p += f"Seed: **{domain}** — rendered through **{lens}**.\n"
+    p += "Interpret the seed loosely or literally, but take it somewhere we haven't been.\n\n"
+    p += "Output: 60 PNG frames, 384x384+, smooth 2-second animation at 30fps.\n"
+    p += "Must be implementable in Python with pip libraries (numpy, Pillow, matplotlib, scipy, PyOpenGL+osmesa, noise, shapely, networkx, etc).\n\n"
+    p += f"Avoid repeating these recent pieces: {recent_str}\n"
+    if steering:
+        p += f"\nThe user wants: **{steering}**. Make the next piece about this.\n"
+    p += "\nReply EXACTLY:\nTITLE: <3-6 words>\nSPEC: <one paragraph — what's on screen, motion, colors, structure>"
+    return p
+
+def chat(messages, max_tokens=12000, with_tools=True, temperature=0.7):
     payload = {"model": "test", "messages": messages,
-               "temperature": 0.7, "max_tokens": max_tokens,
+               "temperature": temperature, "max_tokens": max_tokens,
                "chat_template_kwargs": {"enable_thinking": False}}
     if with_tools: payload["tools"] = TOOLS
     body = json.dumps(payload).encode()
@@ -51,7 +79,7 @@ def chat(messages, max_tokens=12000, with_tools=True):
     resp = json.loads(urllib.request.urlopen(req, timeout=600).read())
     return resp["choices"][0]["message"]
 
-def get_recent_titles(n=8):
+def get_recent_titles(n=24):
     if not os.path.exists(INDEX): return []
     data = json.loads(open(INDEX).read())
     return [v.get("title", v.get("name", "?")) for v in data["videos"][:n]]
@@ -68,14 +96,26 @@ def write_state(stage, **kwargs):
             json.dump({"stage": stage, "ts": int(time.time()), **kwargs}, f)
     except Exception: pass
 
+def sample_domain(recent_str):
+    """Stage 1: ask LLM to freely pick a domain from all of human knowledge."""
+    prompt = DOMAIN_PROMPT + f"\n\nAvoid these recent themes: {recent_str}"
+    msg = chat([{"role": "user", "content": prompt}],
+               max_tokens=40, with_tools=False, temperature=1.3)
+    text = (msg.get("content", "") or msg.get("reasoning_content", "") or "").strip()
+    return text.strip('"').strip(".")[:60] or "something unexpected"
+
 def generate_task():
-    """Ask the LLM to invent a new task. Returns (title, spec, steering_used)."""
+    """Two-stage ideation: LLM picks a domain, Python picks a lens, then LLM invents a task."""
     recent = get_recent_titles()
     recent_str = ", ".join(f'"{t}"' for t in recent) if recent else "(none yet)"
+    domain = sample_domain(recent_str)
+    lens = random.choice(LENSES)
+    framing = random.choice(FRAMINGS)
     steer = read_steering()
-    steering_block = f"\nThe user is currently steering toward this theme/aesthetic (treat as a soft nudge, NOT a hard requirement — keep variety): {steer}\n" if steer else ""
-    msg = chat([{"role": "user", "content": META_PROMPT.format(recent=recent_str, steering=steering_block)}],
-               max_tokens=600, with_tools=False)
+    prompt = build_meta_prompt(domain, lens, framing, recent_str, steer)
+    print(f"[ideation] domain={domain!r} lens={lens!r}", flush=True)
+    msg = chat([{"role": "user", "content": prompt}],
+               max_tokens=600, with_tools=False, temperature=1.05)
     text = (msg.get("content", "") or msg.get("reasoning_content", "") or "").strip()
     title = "untitled"
     spec = text
@@ -270,6 +310,7 @@ def main():
             title, spec, steering_used = generate_task()
             print(f"[gen] {title} :: {spec[:120]}", flush=True)
             write_state("executing", model=model, title=title, spec=spec[:200], steering=steering_used)
+            # domain/lens logged by generate_task via print
             result = execute_task(title, spec)
             result["steering"] = steering_used
             write_state("encoding", model=model, title=title, steering=steering_used,

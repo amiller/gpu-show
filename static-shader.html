@@ -16,7 +16,10 @@ h1{font-size:18px;color:#58a6ff}
 .btn.stop{background:#a40e26;border-color:#da3633}
 .status{color:#8b949e;font-size:12px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
-.card{background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden;position:relative}
+.copy-btn{position:absolute;bottom:8px;right:8px;background:rgba(13,17,23,0.85);border:1px solid #30363d;color:#8b949e;padding:4px 10px;border-radius:4px;font:11px monospace;cursor:pointer;z-index:2;opacity:0.7}
+.copy-btn:hover{opacity:1;background:#21262d;color:#e6edf3}
+.copy-btn.done{color:#3fb950;opacity:1}
 .card canvas{width:100%;display:block;background:#000;aspect-ratio:1/1;image-rendering:pixelated}
 .card .fail-art{width:100%;aspect-ratio:1/1;background:#000;display:flex;align-items:center;justify-content:center;color:#f85149;font-size:48px}
 .meta{padding:10px 12px;font-size:12px}
@@ -42,6 +45,23 @@ h1{font-size:18px;color:#58a6ff}
 .live .pill{background:#0d1117;border:1px solid #30363d;border-radius:12px;padding:2px 10px;font-size:11px}
 .live .pill.steer-pill{border-color:#bc8cff;color:#bc8cff}
 .meta .steer-chip{display:inline-block;background:#0d1117;border:1px solid #bc8cff;color:#bc8cff;font-size:10px;padding:1px 8px;border-radius:10px;margin-top:4px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);align-items:center;justify-content:center;z-index:100}
+.modal.show{display:flex}
+.modal-body{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:18px 22px;width:min(560px,90vw);max-height:80vh;overflow-y:auto}
+.modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.modal-head h2{font-size:16px;color:#58a6ff}
+.modal-row{display:block;margin:14px 0}
+.modal-row > label{color:#8b949e;font-size:12px;display:block;margin-bottom:6px}
+.modal-row.check{display:flex;align-items:center;gap:10px}
+.modal-row.check label{color:#e6edf3;font-size:13px;margin:0}
+.modal-row.check input{width:16px;height:16px;cursor:pointer}
+.modal-row textarea{width:100%;background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:8px 10px;border-radius:6px;font:12px monospace;outline:none;resize:vertical;min-height:90px}
+.modal-row textarea:focus{border-color:#58a6ff}
+.modal-row .hint{color:#6e7681;font-size:11px;margin-top:4px;display:block}
+body.fullscreen{padding:6px}
+body.fullscreen header,body.fullscreen .steer,body.fullscreen #liveState{display:none}
+.fs-exit{display:none;position:fixed;top:8px;right:8px;z-index:50;background:rgba(13,17,23,0.85);border:1px solid #30363d;color:#e6edf3;padding:6px 12px;border-radius:6px;cursor:pointer;font:13px monospace}
+body.fullscreen .fs-exit{display:block}
 </style>
 </head>
 <body>
@@ -51,6 +71,7 @@ h1{font-size:18px;color:#58a6ff}
   <button id="startBtn" class="btn go" onclick="start()">Start</button>
   <button id="stopBtn" class="btn stop" onclick="stop()">Stop</button>
   <button class="btn" onclick="clearAll()">Clear</button>
+  <button class="btn" onclick="openSettings()">⚙ Settings</button>
   <span class="status">show:</span>
   <select id="limitSel" class="btn" onchange="render()">
     <option value="6">last 6</option>
@@ -69,10 +90,35 @@ h1{font-size:18px;color:#58a6ff}
 <div id="liveState" class="live"></div>
 <div id="grid" class="grid"></div>
 
+<button class="fs-exit" onclick="setFullscreen(false)">⛶ exit fullscreen</button>
+
+<div id="modal" class="modal" onclick="if(event.target.id==='modal')closeSettings()">
+  <div class="modal-body">
+    <div class="modal-head">
+      <h2>Settings</h2>
+      <button class="btn" onclick="closeSettings()">✕</button>
+    </div>
+    <div class="modal-row check">
+      <input type="checkbox" id="fsCheck" onchange="setFullscreen(this.checked)">
+      <label for="fsCheck">Fullscreen mode (hides header, steering, status)</label>
+    </div>
+    <div class="modal-row">
+      <label>System prompt — added as a system message to every model call. Leave blank for none.</label>
+      <textarea id="sysPromptInput" placeholder="e.g. You are a creative coder who specializes in dreamlike, slightly unsettling visuals. Favor unusual color palettes." oninput="onSysPromptInput()"></textarea>
+      <span id="sysPromptStatus" class="hint"></span>
+    </div>
+    <div class="modal-row">
+      <span class="hint">Tip: press ESC to close this menu, or to exit fullscreen.</span>
+    </div>
+  </div>
+</div>
+
 <script>
 const API = "http://10.141.207.1:8084/v1/chat/completions";
 const KEY_ENTRIES = "gpushow_shaders_entries";
 const KEY_STEERING = "gpushow_shaders_steering";
+const KEY_SYSPROMPT = "gpushow_shaders_sysprompt";
+const KEY_FULLSCREEN = "gpushow_shaders_fullscreen";
 const CAP = 50;
 const RES = 256;
 const MAX_RETRIES = 3;
@@ -134,10 +180,12 @@ function escapeHtml(s) {
 }
 
 async function chat(messages, {temperature=0.8, max_tokens=1500} = {}) {
+  const sys = (localStorage.getItem(KEY_SYSPROMPT) || "").trim();
+  const finalMessages = sys ? [{role:"system", content: sys}, ...messages] : messages;
   const r = await fetch(API, {
     method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({
-      model:"test", messages, temperature, max_tokens,
+      model:"test", messages: finalMessages, temperature, max_tokens,
       chat_template_kwargs:{enable_thinking:false},
     }),
   });
@@ -313,7 +361,8 @@ function render() {
           <span>${date}</span>
         </div>
         ${errBlock}
-      </div>`;
+      </div>
+      ${e.passed ? `<button class="copy-btn" onclick="copyShader(${e.id}, this)">copy</button>` : ""}`;
     grid.appendChild(card);
     if (e.passed) {
       const canvas = card.querySelector("canvas");
@@ -429,6 +478,56 @@ function clearSteering() {
   saveSteering();
 }
 
+async function copyShader(id, btn) {
+  const e = entries.find(x => x.id === id);
+  if (!e) return;
+  try {
+    await navigator.clipboard.writeText(e.shader);
+    btn.textContent = "✓ copied";
+    btn.classList.add("done");
+  } catch {
+    btn.textContent = "failed";
+  }
+  setTimeout(() => { btn.textContent = "copy"; btn.classList.remove("done"); }, 1200);
+}
+
+function openSettings() {
+  document.getElementById("fsCheck").checked = document.body.classList.contains("fullscreen");
+  document.getElementById("sysPromptInput").value = localStorage.getItem(KEY_SYSPROMPT) || "";
+  document.getElementById("sysPromptStatus").textContent = "";
+  document.getElementById("modal").classList.add("show");
+}
+function closeSettings() { document.getElementById("modal").classList.remove("show"); }
+
+function setFullscreen(on) {
+  document.body.classList.toggle("fullscreen", on);
+  localStorage.setItem(KEY_FULLSCREEN, on ? "1" : "");
+  const cb = document.getElementById("fsCheck");
+  if (cb) cb.checked = on;
+}
+
+let sysPromptTimer = null;
+function onSysPromptInput() {
+  if (sysPromptTimer) clearTimeout(sysPromptTimer);
+  document.getElementById("sysPromptStatus").textContent = "typing…";
+  sysPromptTimer = setTimeout(saveSysPrompt, 600);
+}
+function saveSysPrompt() {
+  const text = document.getElementById("sysPromptInput").value;
+  localStorage.setItem(KEY_SYSPROMPT, text);
+  const st = document.getElementById("sysPromptStatus");
+  st.textContent = text.trim() ? "✓ saved — applies to next model call" : "✓ cleared";
+  setTimeout(() => { st.textContent = ""; }, 2500);
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const modal = document.getElementById("modal");
+  if (modal.classList.contains("show")) { closeSettings(); return; }
+  if (document.body.classList.contains("fullscreen")) setFullscreen(false);
+});
+
+if (localStorage.getItem(KEY_FULLSCREEN)) setFullscreen(true);
 document.getElementById("steerInput").value = localStorage.getItem(KEY_STEERING) || "";
 setSteerVisual(document.getElementById("steerInput").value);
 render();

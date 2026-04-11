@@ -76,6 +76,7 @@ const KEY_STEERING = "gpushow_shaders_steering";
 const CAP = 50;
 const RES = 256;
 const MAX_RETRIES = 3;
+const PAGE_LOAD = performance.now();
 
 const LENSES = [
   "microscopic close-up","field-guide illustration","museum vitrine lighting",
@@ -121,7 +122,6 @@ let entries = load(KEY_ENTRIES, []);
 let running = false;
 let liveState = {stage:"idle"};
 const animatables = [];
-const startedMap = new Map();
 
 function load(k, dflt) {
   try { return JSON.parse(localStorage.getItem(k)) || dflt; }
@@ -184,11 +184,18 @@ function buildShaderPrompt(domain, lens, framing, recent, steering) {
 function parseReply(text) {
   const titleM = text.match(/TITLE:\s*(.+)/i);
   const specM  = text.match(/SPEC:\s*([\s\S]+?)(?=\n\s*SHADER:|\n\s*```)/i);
-  const codeM  = text.match(/```(?:glsl|c\+\+|cpp|c)?\s*([\s\S]+?)```/);
+  let shader = "";
+  const codeM = text.match(/```(?:glsl|c\+\+|cpp|c)?\s*([\s\S]+?)```/);
+  if (codeM) {
+    shader = codeM[1];
+  } else {
+    const tail = text.match(/SHADER:\s*([\s\S]+)$/i);
+    if (tail) shader = tail[1];
+  }
   return {
     title: (titleM?.[1] || "untitled").trim().slice(0, 80),
     spec:  (specM?.[1]  || "").trim().slice(0, 400),
-    shader: sanitizeShader((codeM?.[1] || "").trim()),
+    shader: sanitizeShader(shader.trim()),
   };
 }
 
@@ -240,9 +247,8 @@ function tryCompile(canvas, shaderBody) {
 }
 
 function tick() {
-  const now = performance.now();
+  const t = (performance.now() - PAGE_LOAD) / 1000;
   for (const a of animatables) {
-    const t = (now - a.started) / 1000;
     a.gl.uniform1f(a.uTime, t);
     a.gl.uniform2f(a.uRes, RES, RES);
     a.gl.drawArrays(a.gl.TRIANGLE_STRIP, 0, 4);
@@ -312,10 +318,7 @@ function render() {
     if (e.passed) {
       const canvas = card.querySelector("canvas");
       const r = tryCompile(canvas, e.shader);
-      if (r.ok) {
-        if (!startedMap.has(e.id)) startedMap.set(e.id, performance.now());
-        animatables.push({...r, started: startedMap.get(e.id)});
-      }
+      if (r.ok) animatables.push(r);
     }
   }
 }
@@ -329,30 +332,40 @@ async function generateOne() {
   const steering = localStorage.getItem(KEY_STEERING) || "";
   setLive("inventing", {title: `${domain} / ${lens}`});
   const messages = [{role:"user", content: buildShaderPrompt(domain, lens, framing, recent, steering)}];
-  let parsed = parseReply(await chat(messages, {temperature:1.05, max_tokens:1800}));
+  let raw = await chat(messages, {temperature:1.05, max_tokens:1800});
+  let parsed = parseReply(raw);
   let attempt = 0;
   const errors = [];
   while (true) {
-    if (!parsed.shader) { errors.push("no SHADER block in reply"); break; }
-    setLive("compiling", {title: parsed.title, attempt});
-    const probe = document.createElement("canvas");
-    probe.width = probe.height = RES;
-    const r = tryCompile(probe, parsed.shader);
-    if (r.ok) {
-      entries.unshift({
-        id: Date.now(), ts: Math.floor(Date.now()/1000),
-        title: parsed.title, spec: parsed.spec, shader: parsed.shader,
-        steering, passed: true, retries: attempt, errors,
-      });
-      entries = entries.slice(0, CAP);
-      save(); render(); return;
+    let err = null;
+    if (!parsed.shader) {
+      err = "no parseable shader in reply (need a fenced ```glsl ... ``` block, or a SHADER: section)";
+    } else {
+      setLive("compiling", {title: parsed.title, attempt});
+      const probe = document.createElement("canvas");
+      probe.width = probe.height = RES;
+      const r = tryCompile(probe, parsed.shader);
+      if (r.ok) {
+        entries.unshift({
+          id: Date.now(), ts: Math.floor(Date.now()/1000),
+          title: parsed.title, spec: parsed.spec, shader: parsed.shader,
+          steering, passed: true, retries: attempt, errors,
+        });
+        entries = entries.slice(0, CAP);
+        save(); render(); return;
+      }
+      err = r.err;
     }
-    errors.push(`attempt ${attempt}: ${r.err}`);
+    errors.push(`attempt ${attempt}: ${err}`);
     attempt++;
     if (attempt > MAX_RETRIES) break;
-    messages.push({role:"assistant", content:`TITLE: ${parsed.title}\nSPEC: ${parsed.spec}\nSHADER:\n\`\`\`glsl\n${parsed.shader}\n\`\`\``});
-    messages.push({role:"user", content:`Your shader failed to compile with this error:\n${r.err}\n\nFix the bug and reply in the same TITLE/SPEC/SHADER format. Keep the same title and spec if they still fit.`});
-    parsed = parseReply(await chat(messages, {temperature:0.7, max_tokens:1800}));
+    messages.push({role:"assistant", content: raw});
+    const followup = parsed.shader
+      ? `Your shader failed to compile with this error:\n${err}\n\nFix the bug and reply in the same TITLE/SPEC/SHADER format. Keep the same title and spec if they still fit.`
+      : `Your previous reply could not be parsed: ${err}\n\nReply again in the EXACT format below. The shader MUST be inside a fenced glsl code block:\n\nTITLE: <3-6 words>\nSPEC: <one paragraph>\nSHADER:\n\`\`\`glsl\n<your fragment shader code>\n\`\`\``;
+    messages.push({role:"user", content: followup});
+    raw = await chat(messages, {temperature:0.7, max_tokens:1800});
+    parsed = parseReply(raw);
   }
   entries.unshift({
     id: Date.now(), ts: Math.floor(Date.now()/1000),
@@ -385,7 +398,7 @@ function start() {
 function stop() { running = false; render(); }
 function clearAll() {
   if (!confirm("Clear all stored shaders?")) return;
-  entries = []; startedMap.clear(); save(); render();
+  entries = []; save(); render();
 }
 
 function setSteerVisual(text, label) {

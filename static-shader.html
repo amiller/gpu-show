@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>GPU Show / shaders</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0d1117;color:#e6edf3;font:14px/1.5 'JetBrains Mono',Consolas,monospace;padding:16px}
+header{display:flex;align-items:center;gap:14px;margin-bottom:16px;flex-wrap:wrap}
+h1{font-size:18px;color:#58a6ff}
+.dot{width:10px;height:10px;border-radius:50%;background:#666;display:inline-block;margin-right:6px}
+.dot.live{background:#3fb950;box-shadow:0 0 8px #3fb950}
+.btn{background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:6px 16px;border-radius:6px;cursor:pointer;font:13px monospace}
+.btn:hover{background:#30363d}
+.btn.go{background:#238636;border-color:#2ea043}
+.btn.stop{background:#a40e26;border-color:#da3633}
+.status{color:#8b949e;font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden}
+.card canvas{width:100%;display:block;background:#000;aspect-ratio:1/1;image-rendering:pixelated}
+.card .fail-art{width:100%;aspect-ratio:1/1;background:#000;display:flex;align-items:center;justify-content:center;color:#f85149;font-size:48px}
+.meta{padding:10px 12px;font-size:12px}
+.meta .name{font-size:14px;color:#58a6ff;font-weight:bold;margin-bottom:4px}
+.meta .stats{color:#8b949e;display:flex;gap:10px;flex-wrap:wrap}
+.meta .pass{color:#3fb950}
+.meta .fail{color:#f85149}
+.meta .err{color:#f85149;font-size:11px;margin-top:4px;max-height:60px;overflow-y:auto;white-space:pre-wrap;font-family:monospace}
+.meta .spec{color:#8b949e;font-size:11px;margin:4px 0 6px;font-style:italic;line-height:1.4;max-height:48px;overflow:hidden}
+.empty{color:#6e7681;text-align:center;padding:60px;grid-column:1/-1}
+.steer{display:flex;align-items:center;gap:8px;margin-bottom:10px;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:8px 12px}
+.steer.active{border-color:#bc8cff;box-shadow:0 0 0 1px #bc8cff inset}
+.steer label{color:#8b949e;font-size:12px}
+.steer input{flex:1;background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:6px 10px;border-radius:6px;font:13px monospace;outline:none}
+.steer input:focus{border-color:#58a6ff}
+.steer.active label{color:#bc8cff}
+.live{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:12px;color:#8b949e;display:flex;gap:14px;align-items:center;flex-wrap:wrap;min-height:34px}
+.live .stage{font-weight:bold;color:#58a6ff;text-transform:uppercase;font-size:11px;letter-spacing:0.5px}
+.live .stage.gen{color:#bc8cff}
+.live .stage.exec{color:#3fb950}
+.live .stage.idle{color:#6e7681}
+.live .stage.err{color:#f85149}
+.live .pill{background:#0d1117;border:1px solid #30363d;border-radius:12px;padding:2px 10px;font-size:11px}
+.live .pill.steer-pill{border-color:#bc8cff;color:#bc8cff}
+.meta .steer-chip{display:inline-block;background:#0d1117;border:1px solid #bc8cff;color:#bc8cff;font-size:10px;padding:1px 8px;border-radius:10px;margin-top:4px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+</style>
+</head>
+<body>
+<header>
+  <h1>GPU Show / shaders</h1>
+  <span><span id="dot" class="dot"></span><span id="state" class="status">idle</span></span>
+  <button id="startBtn" class="btn go" onclick="start()">Start</button>
+  <button id="stopBtn" class="btn stop" onclick="stop()">Stop</button>
+  <button class="btn" onclick="clearAll()">Clear</button>
+  <span class="status">show:</span>
+  <select id="limitSel" class="btn" onchange="render()">
+    <option value="6">last 6</option>
+    <option value="12" selected>last 12</option>
+    <option value="24">last 24</option>
+    <option value="50">all (50)</option>
+  </select>
+  <span id="counter" class="status"></span>
+</header>
+<div class="steer">
+  <label>steer next prompt:</label>
+  <input id="steerInput" type="text" placeholder="e.g. underwater bioluminescence, retro arcade, MC Escher tessellations… (auto-saves)" maxlength="500" oninput="onSteerInput()">
+  <button class="btn" onclick="clearSteering()">×</button>
+  <span id="steerStatus" class="status"></span>
+</div>
+<div id="liveState" class="live"></div>
+<div id="grid" class="grid"></div>
+
+<script>
+const API = "http://10.141.207.1:8084/v1/chat/completions";
+const KEY_ENTRIES = "gpushow_shaders_entries";
+const KEY_STEERING = "gpushow_shaders_steering";
+const CAP = 50;
+const RES = 256;
+const MAX_RETRIES = 3;
+
+const LENSES = [
+  "microscopic close-up","field-guide illustration","museum vitrine lighting",
+  "19th-century scientific plate","thermal camera","x-ray film",
+  "topographic contour map","isometric cutaway","anatomical cross-section",
+  "annotated schematic","VHS tracking artifacts","silhouette and negative space",
+  "translucent layered glass","timelapse compression","cyanotype print",
+  "stained-glass palette","risograph overprint","shadow puppet theater",
+  "liquid mercury surface","woven textile","sumi-e ink wash",
+  "false-color ultraviolet","oscilloscope trace","infographic",
+  "daguerreotype","embossed metal plate","chalk on blackboard",
+  "neon on wet asphalt","woodblock print","dot-matrix printout",
+];
+const FRAMINGS = [
+  "You are a creative director assigning the next piece in a visual show.",
+  "A museum curator commissions a 2-second exhibit loop. Pitch it.",
+  "A scientific illustrator is producing a tiny motion study.",
+  "You are an animator making a 2-second title card for a film festival.",
+  "A demoscene coder needs a concept for a 2-second loop.",
+  "You are writing the next entry in an ongoing visual diary.",
+  "An art teacher gives a studio prompt to generative-art students.",
+  "A data artist wants to turn a mundane dataset into something beautiful.",
+  "A nature documentarian needs a 2-second interstitial animation.",
+  "You are designing the boot screen for a fictional operating system.",
+];
+
+const DOMAIN_PROMPT = `Name one specific subject, phenomenon, or concept from ANY field of human knowledge. Be surprising — don't default to math, fractals, or physics. Could be from history, cooking, sports, law, fashion, plumbing, anything.
+
+Reply with ONLY the concept in 2-6 words. Nothing else.`;
+
+const SHADER_HEADER = `#version 300 es
+precision highp float;
+uniform float iTime;
+uniform vec2 iResolution;
+out vec4 fragColor;
+`;
+
+const VERT = `#version 300 es
+in vec2 a;
+void main(){gl_Position=vec4(a,0.,1.);}`;
+
+let entries = load(KEY_ENTRIES, []);
+let running = false;
+let liveState = {stage:"idle"};
+const animatables = [];
+const startedMap = new Map();
+
+function load(k, dflt) {
+  try { return JSON.parse(localStorage.getItem(k)) || dflt; }
+  catch { return dflt; }
+}
+function save() { localStorage.setItem(KEY_ENTRIES, JSON.stringify(entries)); }
+function pick(a) { return a[Math.floor(Math.random()*a.length)]; }
+function escapeHtml(s) {
+  return (s||"").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function chat(messages, {temperature=0.8, max_tokens=1500} = {}) {
+  const r = await fetch(API, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      model:"test", messages, temperature, max_tokens,
+      chat_template_kwargs:{enable_thinking:false},
+    }),
+  });
+  if (!r.ok) throw new Error(`http ${r.status}: ${await r.text()}`);
+  const j = await r.json();
+  const m = j.choices?.[0]?.message || {};
+  return (m.content || m.reasoning_content || "").trim();
+}
+
+async function sampleDomain(recent) {
+  const recentStr = recent.length ? recent.map(t=>`"${t}"`).join(", ") : "(none yet)";
+  const text = await chat(
+    [{role:"user", content: DOMAIN_PROMPT + `\n\nAvoid these recent themes: ${recentStr}`}],
+    {temperature:1.3, max_tokens:40}
+  );
+  return text.replace(/^["']|["']$/g, "").replace(/\.$/, "").slice(0, 60) || "something unexpected";
+}
+
+function buildShaderPrompt(domain, lens, framing, recent, steering) {
+  const recentStr = recent.length ? recent.map(t=>`"${t}"`).join(", ") : "(none yet)";
+  let p = framing + "\n\n";
+  p += `Seed: **${domain}** — rendered through **${lens}**.\n`;
+  p += "Interpret the seed loosely or literally, but take it somewhere we haven't been.\n\n";
+  p += "OUTPUT: a single WebGL2 (GLSL ES 300) fragment shader that draws an animated 2-second-loop image.\n";
+  p += "These uniforms are ALREADY declared by the harness — use them, don't redeclare them:\n";
+  p += "  uniform float iTime;       // seconds, monotonic\n";
+  p += "  uniform vec2  iResolution; // canvas size in pixels\n";
+  p += "  out vec4 fragColor;        // write your output here\n\n";
+  p += "RULES:\n";
+  p += "- DO NOT include #version, precision, or the uniforms above. The harness prepends them.\n";
+  p += "- Use `void main()` and write to `fragColor`. Do NOT use `gl_FragColor` or `mainImage` (those are WebGL1/Shadertoy).\n";
+  p += "- WebGL2 syntax: `texture(...)`, `in/out`, etc. No `texture2D`, no `varying`.\n";
+  p += "- No textures, no extensions, pure procedural.\n";
+  p += "- Aim for 30-150 lines. Visually striking. Smooth time-based motion that loops at iTime ≈ 2.0.\n\n";
+  p += `Avoid repeating these recent pieces: ${recentStr}\n`;
+  if (steering) p += `\nThe user is currently steering toward this theme/aesthetic (treat as a soft nudge, NOT a hard requirement — keep variety): **${steering}**\n`;
+  p += "\nReply EXACTLY in this format:\n";
+  p += "TITLE: <3-6 words>\n";
+  p += "SPEC: <one paragraph — what's on screen, motion, colors, structure>\n";
+  p += "SHADER:\n```glsl\n<your fragment shader code>\n```";
+  return p;
+}
+
+function parseReply(text) {
+  const titleM = text.match(/TITLE:\s*(.+)/i);
+  const specM  = text.match(/SPEC:\s*([\s\S]+?)(?=\n\s*SHADER:|\n\s*```)/i);
+  const codeM  = text.match(/```(?:glsl|c\+\+|cpp|c)?\s*([\s\S]+?)```/);
+  return {
+    title: (titleM?.[1] || "untitled").trim().slice(0, 80),
+    spec:  (specM?.[1]  || "").trim().slice(0, 400),
+    shader: sanitizeShader((codeM?.[1] || "").trim()),
+  };
+}
+
+function sanitizeShader(src) {
+  return src
+    .replace(/^\s*#version[^\n]*\n/m, "")
+    .replace(/^\s*precision[^\n]*\n/gm, "")
+    .replace(/^\s*uniform\s+float\s+iTime\b[^\n]*\n/gm, "")
+    .replace(/^\s*uniform\s+vec2\s+iResolution\b[^\n]*\n/gm, "")
+    .replace(/^\s*out\s+vec4\s+fragColor\b[^\n]*\n/gm, "");
+}
+
+function tryCompile(canvas, shaderBody) {
+  const gl = canvas.getContext("webgl2", {antialias:false, preserveDrawingBuffer:false});
+  if (!gl) return {ok:false, err:"webgl2 not available"};
+  const compile = (type, src) => {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      const err = gl.getShaderInfoLog(sh);
+      gl.deleteShader(sh);
+      return {sh:null, err};
+    }
+    return {sh, err:null};
+  };
+  const v = compile(gl.VERTEX_SHADER, VERT);
+  if (!v.sh) return {ok:false, err:"vertex: "+v.err};
+  const f = compile(gl.FRAGMENT_SHADER, SHADER_HEADER + shaderBody);
+  if (!f.sh) return {ok:false, err:f.err};
+  const prog = gl.createProgram();
+  gl.attachShader(prog, v.sh);
+  gl.attachShader(prog, f.sh);
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    return {ok:false, err:"link: "+gl.getProgramInfoLog(prog)};
+  }
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, "a");
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  const uTime = gl.getUniformLocation(prog, "iTime");
+  const uRes  = gl.getUniformLocation(prog, "iResolution");
+  gl.useProgram(prog);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  return {ok:true, gl, uTime, uRes};
+}
+
+function tick() {
+  const now = performance.now();
+  for (const a of animatables) {
+    const t = (now - a.started) / 1000;
+    a.gl.uniform1f(a.uTime, t);
+    a.gl.uniform2f(a.uRes, RES, RES);
+    a.gl.drawArrays(a.gl.TRIANGLE_STRIP, 0, 4);
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+function setLive(stage, extras={}) {
+  liveState = {stage, ...extras};
+  renderLive();
+}
+function renderLive() {
+  const el = document.getElementById("liveState");
+  const stages = {
+    idle:["✓ ready","idle"],
+    inventing:["🧠 inventing","gen"],
+    compiling:["⚙ compiling","exec"],
+    error:["⚠ error","err"],
+    stopped:["stopped","idle"],
+  };
+  const [label, cls] = stages[liveState.stage] || [liveState.stage, "idle"];
+  let extras = "";
+  if (liveState.title) extras += `<span class="pill">${escapeHtml(liveState.title)}</span>`;
+  const steer = localStorage.getItem(KEY_STEERING) || "";
+  if (running && steer) extras += `<span class="pill steer-pill">↗ ${escapeHtml(steer)}</span>`;
+  if (liveState.attempt) extras += `<span class="pill">retry ${liveState.attempt}/${MAX_RETRIES}</span>`;
+  if (liveState.error) extras += `<span class="pill" style="color:#f85149">${escapeHtml(String(liveState.error).slice(0,80))}</span>`;
+  el.innerHTML = `<span class="stage ${cls}">${label}</span>${extras}`;
+}
+
+function render() {
+  document.getElementById("dot").className = "dot" + (running ? " live" : "");
+  document.getElementById("state").textContent = running ? "running" : "idle";
+  renderLive();
+  const limit = parseInt(document.getElementById("limitSel").value);
+  const grid = document.getElementById("grid");
+  document.getElementById("counter").textContent = `${entries.length} stored`;
+  animatables.length = 0;
+  grid.innerHTML = "";
+  if (!entries.length) {
+    grid.innerHTML = '<div class="empty">No shaders yet — click Start to begin.</div>';
+    return;
+  }
+  for (const e of entries.slice(0, limit)) {
+    const card = document.createElement("div");
+    card.className = "card";
+    const cls = e.passed ? "pass" : "fail";
+    const tag = e.passed ? "PASS" : "FAIL";
+    const date = new Date(e.ts*1000).toLocaleTimeString();
+    const steerChip = e.steering ? `<div><span class="steer-chip" title="steered toward: ${escapeHtml(e.steering)}">↗ ${escapeHtml(e.steering)}</span></div>` : "";
+    const errBlock = e.passed ? "" : `<div class="err">${escapeHtml((e.errors||[]).join("\n").slice(0,400))}</div>`;
+    card.innerHTML = `
+      ${e.passed ? `<canvas width="${RES}" height="${RES}"></canvas>` : `<div class="fail-art">⚠</div>`}
+      <div class="meta">
+        <div class="name">${escapeHtml(e.title)} <span class="${cls}">[${tag}]</span></div>
+        ${steerChip}
+        <div class="spec">${escapeHtml(e.spec)}</div>
+        <div class="stats">
+          <span>${e.retries||0} retries</span>
+          <span>${(e.shader||"").length} chars</span>
+          <span>${date}</span>
+        </div>
+        ${errBlock}
+      </div>`;
+    grid.appendChild(card);
+    if (e.passed) {
+      const canvas = card.querySelector("canvas");
+      const r = tryCompile(canvas, e.shader);
+      if (r.ok) {
+        if (!startedMap.has(e.id)) startedMap.set(e.id, performance.now());
+        animatables.push({...r, started: startedMap.get(e.id)});
+      }
+    }
+  }
+}
+
+async function generateOne() {
+  const recent = entries.slice(0, 8).map(e=>e.title);
+  setLive("inventing");
+  const domain = await sampleDomain(recent);
+  const lens = pick(LENSES);
+  const framing = pick(FRAMINGS);
+  const steering = localStorage.getItem(KEY_STEERING) || "";
+  setLive("inventing", {title: `${domain} / ${lens}`});
+  const messages = [{role:"user", content: buildShaderPrompt(domain, lens, framing, recent, steering)}];
+  let parsed = parseReply(await chat(messages, {temperature:1.05, max_tokens:1800}));
+  let attempt = 0;
+  const errors = [];
+  while (true) {
+    if (!parsed.shader) { errors.push("no SHADER block in reply"); break; }
+    setLive("compiling", {title: parsed.title, attempt});
+    const probe = document.createElement("canvas");
+    probe.width = probe.height = RES;
+    const r = tryCompile(probe, parsed.shader);
+    if (r.ok) {
+      entries.unshift({
+        id: Date.now(), ts: Math.floor(Date.now()/1000),
+        title: parsed.title, spec: parsed.spec, shader: parsed.shader,
+        steering, passed: true, retries: attempt, errors,
+      });
+      entries = entries.slice(0, CAP);
+      save(); render(); return;
+    }
+    errors.push(`attempt ${attempt}: ${r.err}`);
+    attempt++;
+    if (attempt > MAX_RETRIES) break;
+    messages.push({role:"assistant", content:`TITLE: ${parsed.title}\nSPEC: ${parsed.spec}\nSHADER:\n\`\`\`glsl\n${parsed.shader}\n\`\`\``});
+    messages.push({role:"user", content:`Your shader failed to compile with this error:\n${r.err}\n\nFix the bug and reply in the same TITLE/SPEC/SHADER format. Keep the same title and spec if they still fit.`});
+    parsed = parseReply(await chat(messages, {temperature:0.7, max_tokens:1800}));
+  }
+  entries.unshift({
+    id: Date.now(), ts: Math.floor(Date.now()/1000),
+    title: parsed.title || "untitled", spec: parsed.spec || "",
+    shader: parsed.shader || "", steering, passed: false,
+    retries: attempt, errors,
+  });
+  entries = entries.slice(0, CAP);
+  save(); render();
+}
+
+async function loop() {
+  while (running) {
+    try { await generateOne(); }
+    catch (e) {
+      console.error(e);
+      setLive("error", {error: String(e)});
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }
+  setLive("stopped");
+}
+
+function start() {
+  if (running) return;
+  running = true;
+  render();
+  loop();
+}
+function stop() { running = false; render(); }
+function clearAll() {
+  if (!confirm("Clear all stored shaders?")) return;
+  entries = []; startedMap.clear(); save(); render();
+}
+
+function setSteerVisual(text, label) {
+  const box = document.querySelector(".steer");
+  const st = document.getElementById("steerStatus");
+  if (text.trim()) {
+    box.classList.add("active");
+    st.textContent = label || "↗ active — applies to NEXT new prompt";
+  } else {
+    box.classList.remove("active");
+    st.textContent = label || "";
+  }
+}
+let steerTimer = null;
+function onSteerInput() {
+  if (steerTimer) clearTimeout(steerTimer);
+  setSteerVisual(document.getElementById("steerInput").value, "typing…");
+  steerTimer = setTimeout(saveSteering, 600);
+}
+function saveSteering() {
+  const text = document.getElementById("steerInput").value;
+  localStorage.setItem(KEY_STEERING, text);
+  setSteerVisual(text, text.trim() ? "✓ saved — applies to next NEW prompt" : "✓ cleared");
+  setTimeout(() => setSteerVisual(text), 2500);
+}
+function clearSteering() {
+  document.getElementById("steerInput").value = "";
+  saveSteering();
+}
+
+document.getElementById("steerInput").value = localStorage.getItem(KEY_STEERING) || "";
+setSteerVisual(document.getElementById("steerInput").value);
+render();
+</script>
+</body>
+</html>

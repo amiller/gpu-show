@@ -204,11 +204,14 @@ async function chat(messages, {temperature=0.8, max_tokens=1500} = {}) {
   return (m.content || m.reasoning_content || "").trim();
 }
 
-async function sampleDomain(recent) {
+async function sampleDomain(recent, steering) {
   const recentStr = recent.length ? recent.map(t=>`"${t}"`).join(", ") : "(none yet)";
+  const prompt = steering
+    ? `Name one specific subject, phenomenon, or moment WITHIN this theme: **${steering}**.\nStay clearly on-theme. Be specific — not the theme itself restated, but a concrete facet of it.\n\nReply with ONLY the concept in 2-6 words. Nothing else.\n\nAvoid these recent: ${recentStr}`
+    : DOMAIN_PROMPT + `\n\nAvoid these recent themes: ${recentStr}`;
   const text = await chat(
-    [{role:"user", content: DOMAIN_PROMPT + `\n\nAvoid these recent themes: ${recentStr}`}],
-    {temperature:1.3, max_tokens:40}
+    [{role:"user", content: prompt}],
+    {temperature: steering ? 1.0 : 1.3, max_tokens:40}
   );
   return text.replace(/^["']|["']$/g, "").replace(/\.$/, "").slice(0, 60) || "something unexpected";
 }
@@ -230,7 +233,7 @@ function buildShaderPrompt(domain, lens, framing, recent, steering) {
   p += "- No textures, no extensions, pure procedural.\n";
   p += "- Aim for 30-150 lines. Visually striking. Smooth time-based motion that loops at iTime ≈ 2.0.\n\n";
   p += `Avoid repeating these recent pieces: ${recentStr}\n`;
-  if (steering) p += `\nThe user is currently steering toward this theme/aesthetic (treat as a soft nudge, NOT a hard requirement — keep variety): **${steering}**\n`;
+  if (steering) p += `\nACTIVE THEME: **${steering}**. The subject above was chosen within this theme — your shader must clearly and directly depict it. Do not drift into unrelated imagery.\n`;
   p += "\nReply EXACTLY in this format:\n";
   p += "TITLE: <3-6 words>\n";
   p += "SPEC: <one paragraph — what's on screen, motion, colors, structure>\n";
@@ -383,11 +386,11 @@ function render() {
 
 async function generateOne() {
   const recent = entries.slice(0, 8).map(e=>e.title);
+  const steering = localStorage.getItem(KEY_STEERING) || "";
   setLive("inventing");
-  const domain = await sampleDomain(recent);
+  const domain = await sampleDomain(recent, steering);
   const lens = pick(LENSES);
   const framing = pick(FRAMINGS);
-  const steering = localStorage.getItem(KEY_STEERING) || "";
   setLive("inventing", {title: `${domain} / ${lens}`});
   const messages = [{role:"user", content: buildShaderPrompt(domain, lens, framing, recent, steering)}];
   let raw = await chat(messages, {temperature:1.05, max_tokens:1800});
@@ -540,7 +543,7 @@ document.addEventListener("keydown", (e) => {
   if (document.body.classList.contains("fullscreen")) setFullscreen(false);
 });
 
-if (localStorage.getItem(KEY_SYSPROMPT) === null) localStorage.setItem(KEY_SYSPROMPT, DEFAULT_SYSPROMPT);
+if (!localStorage.getItem(KEY_SYSPROMPT)) localStorage.setItem(KEY_SYSPROMPT, DEFAULT_SYSPROMPT);
 if (localStorage.getItem(KEY_FULLSCREEN)) setFullscreen(true);
 document.getElementById("steerInput").value = localStorage.getItem(KEY_STEERING) || "";
 setSteerVisual(document.getElementById("steerInput").value);

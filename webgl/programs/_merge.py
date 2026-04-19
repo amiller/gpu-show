@@ -12,18 +12,18 @@ Firefox scopes localStorage per-file (so static-shader and shader live in
 separate sqlites even though the key collides), Chrome scopes all file://
 under one bucket (so they merge naturally in Chrome).
 """
-import json, os, glob
+import json, glob
+from pathlib import Path
 
-OUT = "/home/amiller/installing/ollama/gpu-show/programs"
-FF = f"{OUT}/firefox"
-CH = f"{OUT}/chrome"
-MERGED = f"{OUT}/merged"
-os.makedirs(MERGED, exist_ok=True)
+HERE = Path(__file__).parent
+FF = HERE / "firefox"
+CH = HERE / "chrome"
+MERGED = HERE / "merged"
+MERGED.mkdir(parents=True, exist_ok=True)
 
-# load all firefox dumps
-ff_files = {os.path.basename(p)[:-5]: json.load(open(p)) for p in glob.glob(f"{FF}/*.json")}
-# chrome dump (single file)
-ch_blob = json.load(open(f"{CH}/file:.json"))["data"]
+ff_files = {Path(p).stem: json.loads(Path(p).read_text()) for p in glob.glob(str(FF / "*.json"))}
+ch_candidates = list(CH.glob("file*.json"))
+ch_blob = json.loads(ch_candidates[0].read_text())["data"] if ch_candidates else {}
 
 def entries(obj, js_key):
     v = obj.get(js_key, [])
@@ -57,9 +57,8 @@ for bucket, sources_list in sources.items():
             if eid not in by_id:
                 by_id[eid] = e
     merged_list = sorted(by_id.values(), key=lambda e: e.get("ts", 0))
-    path = f"{MERGED}/{bucket}.json"
-    with open(path, "w") as f:
-        json.dump(merged_list, f, indent=2)
+    path = MERGED / f"{bucket}.json"
+    path.write_text(json.dumps(merged_list, indent=2))
     ff = sum(n for l, n in per_source if l.startswith("firefox"))
     ch = sum(n for l, n in per_source if l.startswith("chrome"))
     print(f"{bucket:10s} {ff:>4d} {ch:>4d} {len(merged_list):>7d}  [{', '.join(f'{l}:{n}' for l,n in per_source)}]")

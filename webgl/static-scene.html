@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>GPU Show / scenes</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0d1117;color:#e6edf3;font:14px/1.5 'JetBrains Mono',Consolas,monospace;padding:16px}
+header{display:flex;align-items:center;gap:14px;margin-bottom:16px;flex-wrap:wrap}
+h1{font-size:18px;color:#58a6ff}
+.dot{width:10px;height:10px;border-radius:50%;background:#666;display:inline-block;margin-right:6px}
+.dot.live{background:#3fb950;box-shadow:0 0 8px #3fb950}
+.btn{background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:6px 16px;border-radius:6px;cursor:pointer;font:13px monospace}
+.btn:hover{background:#30363d}
+.btn.go{background:#238636;border-color:#2ea043}
+.btn.stop{background:#a40e26;border-color:#da3633}
+.status{color:#8b949e;font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden;position:relative}
+.copy-btn{position:absolute;bottom:8px;right:8px;background:rgba(13,17,23,0.85);border:1px solid #30363d;color:#8b949e;padding:4px 10px;border-radius:4px;font:11px monospace;cursor:pointer;z-index:2;opacity:0.7}
+.copy-btn:hover{opacity:1;background:#21262d;color:#e6edf3}
+.copy-btn.done{color:#3fb950;opacity:1}
+.card canvas{width:100%;display:block;background:#000;aspect-ratio:1/1;image-rendering:pixelated}
+.card .fail-art{width:100%;aspect-ratio:1/1;background:#000;display:flex;align-items:center;justify-content:center;color:#f85149;font-size:48px}
+.meta{padding:10px 12px;font-size:12px}
+.meta .name{font-size:14px;color:#58a6ff;font-weight:bold;margin-bottom:4px}
+.meta .stats{color:#8b949e;display:flex;gap:10px;flex-wrap:wrap}
+.meta .pass{color:#3fb950}
+.meta .fail{color:#f85149}
+.meta .err{color:#f85149;font-size:11px;margin-top:4px;max-height:60px;overflow-y:auto;white-space:pre-wrap;font-family:monospace}
+.meta .spec{color:#8b949e;font-size:11px;margin:4px 0 6px;font-style:italic;line-height:1.4;max-height:48px;overflow:hidden}
+.empty{color:#6e7681;text-align:center;padding:60px;grid-column:1/-1}
+.steer{display:flex;align-items:center;gap:8px;margin-bottom:10px;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:8px 12px}
+.steer.active{border-color:#bc8cff;box-shadow:0 0 0 1px #bc8cff inset}
+.steer label{color:#8b949e;font-size:12px}
+.steer input{flex:1;background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:6px 10px;border-radius:6px;font:13px monospace;outline:none}
+.steer input:focus{border-color:#58a6ff}
+.steer.active label{color:#bc8cff}
+.live{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:12px;color:#8b949e;display:flex;gap:14px;align-items:center;flex-wrap:wrap;min-height:34px}
+.live .stage{font-weight:bold;color:#58a6ff;text-transform:uppercase;font-size:11px;letter-spacing:0.5px}
+.live .stage.gen{color:#bc8cff}
+.live .stage.exec{color:#3fb950}
+.live .stage.idle{color:#6e7681}
+.live .stage.err{color:#f85149}
+.live .pill{background:#0d1117;border:1px solid #30363d;border-radius:12px;padding:2px 10px;font-size:11px}
+.live .pill.steer-pill{border-color:#bc8cff;color:#bc8cff}
+.meta .steer-chip{display:inline-block;background:#0d1117;border:1px solid #bc8cff;color:#bc8cff;font-size:10px;padding:1px 8px;border-radius:10px;margin-top:4px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);align-items:center;justify-content:center;z-index:100}
+.modal.show{display:flex}
+.modal-body{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:18px 22px;width:min(560px,90vw);max-height:80vh;overflow-y:auto}
+.modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.modal-head h2{font-size:16px;color:#58a6ff}
+.modal-row{display:block;margin:14px 0}
+.modal-row > label{color:#8b949e;font-size:12px;display:block;margin-bottom:6px}
+.modal-row.check{display:flex;align-items:center;gap:10px}
+.modal-row.check label{color:#e6edf3;font-size:13px;margin:0}
+.modal-row.check input{width:16px;height:16px;cursor:pointer}
+.modal-row textarea{width:100%;background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:8px 10px;border-radius:6px;font:12px monospace;outline:none;resize:vertical;min-height:180px;line-height:1.5}
+.modal-row textarea:focus{border-color:#58a6ff}
+.modal-row .hint{color:#6e7681;font-size:11px;margin-top:4px;display:block}
+body.fullscreen{padding:6px}
+body.fullscreen header,body.fullscreen .steer,body.fullscreen #liveState{display:none}
+.fs-exit{display:none;position:fixed;top:8px;right:8px;z-index:50;background:rgba(13,17,23,0.85);border:1px solid #30363d;color:#e6edf3;padding:6px 12px;border-radius:6px;cursor:pointer;font:13px monospace}
+body.fullscreen .fs-exit{display:block}
+</style>
+</head>
+<body>
+<header>
+  <h1>GPU Show / scenes</h1>
+  <span><span id="dot" class="dot"></span><span id="state" class="status">idle</span></span>
+  <button id="startBtn" class="btn go" onclick="start()">Start</button>
+  <button id="stopBtn" class="btn stop" onclick="stop()">Stop</button>
+  <button class="btn" onclick="clearAll()">Clear</button>
+  <button class="btn" onclick="openSettings()">⚙ Settings</button>
+  <span class="status">show:</span>
+  <select id="limitSel" class="btn" onchange="render()">
+    <option value="6">last 6</option>
+    <option value="12" selected>last 12</option>
+    <option value="24">last 24</option>
+    <option value="50">all (50)</option>
+  </select>
+  <span id="counter" class="status"></span>
+</header>
+<div class="steer">
+  <label>steer theme:</label>
+  <input id="steerInput" type="text" placeholder="e.g. deep sea creatures, brutalist architecture, kitchen tools… (auto-saves)" maxlength="500" oninput="onSteerInput()">
+  <button class="btn" onclick="clearSteering()">×</button>
+  <span id="steerStatus" class="status"></span>
+</div>
+<div id="liveState" class="live"></div>
+<div id="grid" class="grid"></div>
+
+<button class="fs-exit" onclick="setFullscreen(false)">⛶ exit fullscreen</button>
+
+<div id="modal" class="modal" onclick="if(event.target.id==='modal')closeSettings()">
+  <div class="modal-body">
+    <div class="modal-head">
+      <h2>Settings</h2>
+      <button class="btn" onclick="closeSettings()">✕</button>
+    </div>
+    <div class="modal-row check">
+      <input type="checkbox" id="fsCheck" onchange="setFullscreen(this.checked)">
+      <label for="fsCheck">Fullscreen mode (hides header, steering, status)</label>
+    </div>
+    <div class="modal-row">
+      <label>System prompt — added as a system message to every model call. Leave blank for none.</label>
+      <textarea id="sysPromptInput" oninput="onSysPromptInput()"></textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+        <span id="sysPromptStatus" class="hint"></span>
+        <button class="btn" onclick="resetSysPrompt()" style="font-size:11px">↺ reset to default</button>
+      </div>
+    </div>
+    <div class="modal-row">
+      <span class="hint">Tip: press ESC to close this menu, or to exit fullscreen. Scene code runs via `new Function` in your browser — don't paste untrusted system prompts.</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = "http://10.141.207.1:8084/v1/chat/completions";
+const KEY_ENTRIES = "gpushow_scenes_entries";
+const KEY_STEERING = "gpushow_scenes_steering";
+const KEY_SYSPROMPT = "gpushow_scenes_sysprompt";
+const KEY_FULLSCREEN = "gpushow_scenes_fullscreen";
+
+const DEFAULT_SYSPROMPT = `You are a WebGL2 scene director with a taste for bold, structurally specific, technically interesting 3D work. You hate placeholder filler: aimless cubes rotating in space, default particle clouds, abstract noise fields with no concept, anything that looks like a WebGL tutorial.
+
+Reach for techniques with real structure: low-poly scenes with crisp silhouettes, vertex-shader-animated meshes, procedurally generated geometry (terrain grids, parametric surfaces, fractal trees, platonic solids, lattice structures, metaballs via marching cubes on a small grid), flat/gouraud/toon shading with hard outlines, instancing for crowds of objects, wireframe or x-ray styles, bold restricted palettes, orthographic and isometric compositions.
+
+Every piece should depict something specific — a recognizable subject, not an abstract study. Use the full WebGL2 API freely: vertex/index buffers, attributes, uniforms, depth testing, back-face culling, instancing, framebuffers for multi-pass effects. Make every piece feel deliberate, not WebGL-default.`;
+
+const CAP = 50;
+const RES = 256;
+const MAX_RETRIES = 3;
+const PAGE_LOAD = performance.now();
+
+const LENSES = [
+  "PS1 low-poly with affine warping","N64 flat-shaded diorama","voxel minecraft blocks",
+  "vector-display wireframe","isometric low-poly diorama","architectural blueprint lines",
+  "toon shaded with bold outlines","outrun neon grid","clay stop-motion",
+  "paper craft / origami folds","x-ray skeleton view","holographic translucent",
+  "glitch / datamosh 3D","CGA 4-color palette","8-bit flat shaded",
+  "phosphor ghost trails","exploded technical diagram","orthographic cutaway",
+  "demoscene plasma-lit","dot-matrix halftone","silhouette negative space",
+  "chalkboard sketch","microscopic wireframe","deep space starfield",
+  "vaporwave gradient sky","stained glass facets","sumi-e ink outlines",
+  "retro arcade bezel","brutalist concrete","blueprint cyanotype",
+];
+
+const DOMAIN_PROMPT = `Name one specific subject, phenomenon, moment, or object from ANY field of human knowledge. Be surprising — don't default to math, fractals, or physics. Could be from history, cooking, sports, law, fashion, plumbing, anything.
+
+Reply with ONLY the concept in 2-6 words. Nothing else.`;
+
+let entries = load(KEY_ENTRIES, []);
+let running = false;
+let liveState = {stage:"idle"};
+const animatables = [];
+
+function load(k, dflt) {
+  try { return JSON.parse(localStorage.getItem(k)) || dflt; }
+  catch { return dflt; }
+}
+function save() { localStorage.setItem(KEY_ENTRIES, JSON.stringify(entries)); }
+function pick(a) { return a[Math.floor(Math.random()*a.length)]; }
+function escapeHtml(s) {
+  return (s||"").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function chat(messages, {temperature=0.8, max_tokens=3000} = {}) {
+  const sys = (localStorage.getItem(KEY_SYSPROMPT) || "").trim();
+  const finalMessages = sys ? [{role:"system", content: sys}, ...messages] : messages;
+  const r = await fetch(API, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      model:"test", messages: finalMessages, temperature, max_tokens,
+      chat_template_kwargs:{enable_thinking:false},
+    }),
+  });
+  if (!r.ok) throw new Error(`http ${r.status}: ${await r.text()}`);
+  const j = await r.json();
+  const m = j.choices?.[0]?.message || {};
+  return (m.content || m.reasoning_content || "").trim();
+}
+
+async function sampleDomain(recent, steering) {
+  const recentStr = recent.length ? recent.map(t=>`"${t}"`).join(", ") : "(none yet)";
+  const prompt = steering
+    ? `Name one specific subject, phenomenon, or moment WITHIN this theme: **${steering}**.\nStay clearly on-theme. Be specific — not the theme itself restated, but a concrete facet of it.\n\nReply with ONLY the concept in 2-6 words. Nothing else.\n\nAvoid these recent: ${recentStr}`
+    : DOMAIN_PROMPT + `\n\nAvoid these recent themes: ${recentStr}`;
+  const text = await chat(
+    [{role:"user", content: prompt}],
+    {temperature: steering ? 1.0 : 1.3, max_tokens:40}
+  );
+  return text.replace(/^["']|["']$/g, "").replace(/\.$/, "").slice(0, 60) || "something unexpected";
+}
+
+function buildScenePrompt(domain, lens, recent, steering) {
+  const recentStr = recent.length ? recent.map(t=>`"${t}"`).join(", ") : "(none yet)";
+  let p = "";
+  p += `Subject: **${domain}** — visual style: **${lens}**.\n`;
+  p += "Depict this subject as a 2-second looping WebGL2 scene. Interpret the subject literally — someone should recognize what it is.\n\n";
+  p += "OUTPUT CONTRACT: a JavaScript snippet that is invoked as\n";
+  p += "  new Function('gl','canvas', yourCode)(gl, canvas)\n";
+  p += "- `gl` is a live WebGL2 rendering context. `canvas.width === canvas.height === 256`.\n";
+  p += "- Do all setup (compile shaders, upload buffers, enable depth test, etc.) at the top level of your snippet.\n";
+  p += "- End your snippet with: `return function draw(t) { ... };` — t is seconds elapsed, called every frame.\n";
+  p += "- `draw(t)` must clear and render one complete frame. Intended loop period ≈ 2.0 seconds.\n\n";
+  p += "RULES:\n";
+  p += "- Pure WebGL2. No image loads, no fetch, no external URLs, no texture files. Procedural only.\n";
+  p += "- Full WebGL2 API: `gl.createBuffer`, `gl.bufferData`, `gl.vertexAttribPointer`, `gl.drawArrays`/`gl.drawElements`, `gl.drawArraysInstanced`, uniforms, `gl.DEPTH_TEST`, `gl.CULL_FACE`, framebuffers, the works.\n";
+  p += "- GLSL shaders use `#version 300 es` on line 1. Fragment shaders need `precision highp float;`. Use `in`/`out`, not `attribute`/`varying`.\n";
+  p += "- Build a real 3D scene: projection+view matrix, meshes with actual depth, shading that looks intentional. Feel free to write small helpers for matrices inside your snippet.\n";
+  p += "- Target 80–300 lines. No infinite loops. Do NOT call `requestAnimationFrame` — the harness drives the frame loop.\n";
+  p += "- Your snippet runs once to set up; the returned draw(t) runs every frame. Don't recompile shaders inside draw(t).\n\n";
+  p += `Avoid repeating recent: ${recentStr}\n`;
+  if (steering) p += `\nACTIVE THEME: **${steering}**. The subject above was chosen within this theme — your scene must clearly and directly depict it. Do not drift into unrelated imagery.\n`;
+  p += "\nReply EXACTLY in this format:\n";
+  p += "TITLE: <3-6 words>\n";
+  p += "SPEC: <one paragraph — geometry, shading, camera, motion, palette>\n";
+  p += "CODE:\n```js\n<your JavaScript snippet — setup + return draw(t)>\n```";
+  return p;
+}
+
+function parseReply(text) {
+  const titleM = text.match(/TITLE:\s*(.+)/i);
+  const specM  = text.match(/SPEC:\s*([\s\S]+?)(?=\n\s*CODE:|\n\s*```)/i);
+  let code = "";
+  const codeM = text.match(/```(?:js|javascript)?\s*([\s\S]+?)```/);
+  if (codeM) {
+    code = codeM[1];
+  } else {
+    const tail = text.match(/CODE:\s*([\s\S]+)$/i);
+    if (tail) code = tail[1];
+  }
+  return {
+    title: (titleM?.[1] || "untitled").trim().slice(0, 80),
+    spec:  (specM?.[1]  || "").trim().slice(0, 400),
+    code: code.trim(),
+  };
+}
+
+function snapshotFrame(gl, w, h) {
+  const px = new Uint8Array(w*h*4);
+  gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  return px;
+}
+function analyzeFrame(px) {
+  const buckets = new Set();
+  let bg = [px[0], px[1], px[2]];
+  let nonBg = 0;
+  for (let i = 0; i < px.length; i += 4) {
+    const r = px[i] >> 3, g = px[i+1] >> 3, b = px[i+2] >> 3;
+    buckets.add((r<<10) | (g<<5) | b);
+    if (Math.abs(px[i]-bg[0]) + Math.abs(px[i+1]-bg[1]) + Math.abs(px[i+2]-bg[2]) > 20) nonBg++;
+  }
+  return {distinct: buckets.size, nonBgFrac: nonBg / (px.length/4)};
+}
+function framesEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 4) {
+    diff += Math.abs(a[i]-b[i]) + Math.abs(a[i+1]-b[i+1]) + Math.abs(a[i+2]-b[i+2]);
+    if (diff > 500) return false;
+  }
+  return true;
+}
+
+function tryInstantiate(canvas, code) {
+  const gl = canvas.getContext("webgl2", {antialias:false, preserveDrawingBuffer:true});
+  if (!gl) return {ok:false, err:"webgl2 not available"};
+  let draw;
+  try {
+    const fn = new Function('gl', 'canvas', code);
+    const result = fn(gl, canvas);
+    if (typeof result !== 'function') {
+      return {ok:false, err:"snippet did not return a draw(t) function — returned "+typeof result};
+    }
+    draw = result;
+  } catch (e) {
+    return {ok:false, err:"setup: "+(e.message || String(e))};
+  }
+  try {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    draw(0);
+  } catch (e) {
+    return {ok:false, err:"draw(0): "+(e.message || String(e))};
+  }
+  let glErr = gl.getError();
+  if (glErr !== gl.NO_ERROR) return {ok:false, err:"gl.getError=0x"+glErr.toString(16)+" after draw(0)"};
+
+  const frame0 = snapshotFrame(gl, canvas.width, canvas.height);
+  const a0 = analyzeFrame(frame0);
+  if (a0.distinct < 3) {
+    return {ok:false, err:`scene rendered as a nearly-solid color (${a0.distinct} distinct colors at t=0). Nothing is being drawn, or the camera/projection is off-screen. Make sure you're actually drawing geometry and that vertices end up in NDC range roughly [-1,1].`};
+  }
+  if (a0.nonBgFrac < 0.02) {
+    return {ok:false, err:`scene is nearly empty (${(a0.nonBgFrac*100).toFixed(1)}% non-background pixels at t=0). Geometry is off-screen, or projection matrix collapses everything to a point. Verify your view/projection matrices and check that drawn objects are in front of the camera.`};
+  }
+
+  try { draw(1.0); }
+  catch (e) { return {ok:false, err:"draw(1.0): "+(e.message || String(e))}; }
+  glErr = gl.getError();
+  if (glErr !== gl.NO_ERROR) return {ok:false, err:"gl.getError=0x"+glErr.toString(16)+" after draw(1.0)"};
+  const frame1 = snapshotFrame(gl, canvas.width, canvas.height);
+  if (framesEqual(frame0, frame1)) {
+    return {ok:false, err:"scene is static — draw(0) and draw(1.0) produced identical frames. The t parameter isn't driving any motion. Use t in a uniform to animate rotation, position, or color."};
+  }
+
+  return {ok:true, gl, draw};
+}
+
+function tick() {
+  const t = (performance.now() - PAGE_LOAD) / 1000;
+  for (let i = animatables.length - 1; i >= 0; i--) {
+    const a = animatables[i];
+    try { a.draw(t); }
+    catch (e) { console.warn("draw threw, dropping:", e); animatables.splice(i, 1); }
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+function setLive(stage, extras={}) {
+  liveState = {stage, ...extras};
+  renderLive();
+}
+function renderLive() {
+  const el = document.getElementById("liveState");
+  const stages = {
+    idle:["✓ ready","idle"],
+    inventing:["🧠 inventing","gen"],
+    building:["⚙ building","exec"],
+    error:["⚠ error","err"],
+    stopped:["stopped","idle"],
+  };
+  const [label, cls] = stages[liveState.stage] || [liveState.stage, "idle"];
+  let extras = "";
+  if (liveState.title) extras += `<span class="pill">${escapeHtml(liveState.title)}</span>`;
+  const steer = localStorage.getItem(KEY_STEERING) || "";
+  if (running && steer) extras += `<span class="pill steer-pill">↗ ${escapeHtml(steer)}</span>`;
+  if (liveState.attempt) extras += `<span class="pill">retry ${liveState.attempt}/${MAX_RETRIES}</span>`;
+  if (liveState.error) extras += `<span class="pill" style="color:#f85149">${escapeHtml(String(liveState.error).slice(0,80))}</span>`;
+  el.innerHTML = `<span class="stage ${cls}">${label}</span>${extras}`;
+}
+
+function render() {
+  document.getElementById("dot").className = "dot" + (running ? " live" : "");
+  document.getElementById("state").textContent = running ? "running" : "idle";
+  renderLive();
+  const limit = parseInt(document.getElementById("limitSel").value);
+  const grid = document.getElementById("grid");
+  document.getElementById("counter").textContent = `${entries.length} stored`;
+  animatables.length = 0;
+  grid.innerHTML = "";
+  if (!entries.length) {
+    grid.innerHTML = '<div class="empty">No scenes yet — click Start to begin.</div>';
+    return;
+  }
+  for (const e of entries.slice(0, limit)) {
+    const card = document.createElement("div");
+    card.className = "card";
+    const cls = e.passed ? "pass" : "fail";
+    const tag = e.passed ? "PASS" : "FAIL";
+    const date = new Date(e.ts*1000).toLocaleTimeString();
+    const steerChip = e.steering ? `<div><span class="steer-chip" title="steered: ${escapeHtml(e.steering)}">↗ ${escapeHtml(e.steering)}</span></div>` : "";
+    const errBlock = e.passed ? "" : `<div class="err">${escapeHtml((e.errors||[]).join("\n").slice(0,400))}</div>`;
+    card.innerHTML = `
+      ${e.passed ? `<canvas width="${RES}" height="${RES}"></canvas>` : `<div class="fail-art">⚠</div>`}
+      <div class="meta">
+        <div class="name">${escapeHtml(e.title)} <span class="${cls}">[${tag}]</span></div>
+        ${steerChip}
+        <div class="spec">${escapeHtml(e.spec)}</div>
+        <div class="stats">
+          <span>${e.retries||0} retries</span>
+          <span>${(e.code||"").length} chars</span>
+          <span>${date}</span>
+        </div>
+        ${errBlock}
+      </div>
+      ${e.passed ? `<button class="copy-btn" onclick="copyCode(${e.id}, this)">copy</button>` : ""}`;
+    grid.appendChild(card);
+    if (e.passed) {
+      const canvas = card.querySelector("canvas");
+      const r = tryInstantiate(canvas, e.code);
+      if (r.ok) animatables.push(r);
+    }
+  }
+}
+
+async function generateOne() {
+  const recent = entries.slice(0, 8).map(e=>e.title);
+  const steering = localStorage.getItem(KEY_STEERING) || "";
+  setLive("inventing");
+  const domain = await sampleDomain(recent, steering);
+  const lens = pick(LENSES);
+  setLive("inventing", {title: `${domain} / ${lens}`});
+  const messages = [{role:"user", content: buildScenePrompt(domain, lens, recent, steering)}];
+  let raw = await chat(messages, {temperature:1.05, max_tokens:3500});
+  let parsed = parseReply(raw);
+  let attempt = 0;
+  const errors = [];
+  while (true) {
+    let err = null;
+    if (!parsed.code) {
+      err = "no parseable code in reply (need a fenced ```js ... ``` block or a CODE: section)";
+    } else {
+      setLive("building", {title: parsed.title, attempt});
+      const probe = document.createElement("canvas");
+      probe.width = probe.height = RES;
+      const r = tryInstantiate(probe, parsed.code);
+      if (r.ok) {
+        entries.unshift({
+          id: Date.now(), ts: Math.floor(Date.now()/1000),
+          title: parsed.title, spec: parsed.spec, code: parsed.code,
+          steering, passed: true, retries: attempt, errors,
+        });
+        entries = entries.slice(0, CAP);
+        save(); render(); return;
+      }
+      err = r.err;
+    }
+    errors.push(`attempt ${attempt}: ${err}`);
+    attempt++;
+    if (attempt > MAX_RETRIES) break;
+    messages.push({role:"assistant", content: raw});
+    const followup = parsed.code
+      ? `Your scene failed with this error:\n${err}\n\nFix the bug and reply again in the same TITLE/SPEC/CODE format. Keep the same title and spec if they still fit. Remember: top-level setup, return a draw(t) function, no requestAnimationFrame.`
+      : `Your previous reply could not be parsed: ${err}\n\nReply again in the EXACT format below. The code MUST be inside a fenced js code block:\n\nTITLE: <3-6 words>\nSPEC: <one paragraph>\nCODE:\n\`\`\`js\n<your snippet>\n\`\`\``;
+    messages.push({role:"user", content: followup});
+    raw = await chat(messages, {temperature:0.7, max_tokens:3500});
+    parsed = parseReply(raw);
+  }
+  entries.unshift({
+    id: Date.now(), ts: Math.floor(Date.now()/1000),
+    title: parsed.title || "untitled", spec: parsed.spec || "",
+    code: parsed.code || "", steering, passed: false,
+    retries: attempt, errors,
+  });
+  entries = entries.slice(0, CAP);
+  save(); render();
+}
+
+async function loop() {
+  while (running) {
+    try { await generateOne(); }
+    catch (e) {
+      console.error(e);
+      setLive("error", {error: String(e)});
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }
+  setLive("stopped");
+}
+
+function start() {
+  if (running) return;
+  running = true;
+  render();
+  loop();
+}
+function stop() { running = false; render(); }
+function clearAll() {
+  if (!confirm("Clear all stored scenes?")) return;
+  entries = []; save(); render();
+}
+
+function setSteerVisual(text, label) {
+  const box = document.querySelector(".steer");
+  const st = document.getElementById("steerStatus");
+  if (text.trim()) {
+    box.classList.add("active");
+    st.textContent = label || "↗ active — drives the next scene";
+  } else {
+    box.classList.remove("active");
+    st.textContent = label || "";
+  }
+}
+let steerTimer = null;
+function onSteerInput() {
+  if (steerTimer) clearTimeout(steerTimer);
+  setSteerVisual(document.getElementById("steerInput").value, "typing…");
+  steerTimer = setTimeout(saveSteering, 600);
+}
+function saveSteering() {
+  const text = document.getElementById("steerInput").value;
+  localStorage.setItem(KEY_STEERING, text);
+  setSteerVisual(text, text.trim() ? "✓ saved — drives next scene" : "✓ cleared");
+  setTimeout(() => setSteerVisual(text), 2500);
+}
+function clearSteering() {
+  document.getElementById("steerInput").value = "";
+  saveSteering();
+}
+
+async function copyCode(id, btn) {
+  const e = entries.find(x => x.id === id);
+  if (!e) return;
+  try {
+    await navigator.clipboard.writeText(e.code);
+    btn.textContent = "✓ copied";
+    btn.classList.add("done");
+  } catch {
+    btn.textContent = "failed";
+  }
+  setTimeout(() => { btn.textContent = "copy"; btn.classList.remove("done"); }, 1200);
+}
+
+function openSettings() {
+  document.getElementById("fsCheck").checked = document.body.classList.contains("fullscreen");
+  document.getElementById("sysPromptInput").value = localStorage.getItem(KEY_SYSPROMPT) || "";
+  document.getElementById("sysPromptStatus").textContent = "";
+  document.getElementById("modal").classList.add("show");
+}
+function closeSettings() { document.getElementById("modal").classList.remove("show"); }
+
+function setFullscreen(on) {
+  document.body.classList.toggle("fullscreen", on);
+  localStorage.setItem(KEY_FULLSCREEN, on ? "1" : "");
+  const cb = document.getElementById("fsCheck");
+  if (cb) cb.checked = on;
+}
+
+let sysPromptTimer = null;
+function onSysPromptInput() {
+  if (sysPromptTimer) clearTimeout(sysPromptTimer);
+  document.getElementById("sysPromptStatus").textContent = "typing…";
+  sysPromptTimer = setTimeout(saveSysPrompt, 600);
+}
+function saveSysPrompt() {
+  const text = document.getElementById("sysPromptInput").value;
+  localStorage.setItem(KEY_SYSPROMPT, text);
+  const st = document.getElementById("sysPromptStatus");
+  st.textContent = text.trim() ? "✓ saved — applies to next model call" : "✓ cleared";
+  setTimeout(() => { st.textContent = ""; }, 2500);
+}
+function resetSysPrompt() {
+  document.getElementById("sysPromptInput").value = DEFAULT_SYSPROMPT;
+  saveSysPrompt();
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const modal = document.getElementById("modal");
+  if (modal.classList.contains("show")) { closeSettings(); return; }
+  if (document.body.classList.contains("fullscreen")) setFullscreen(false);
+});
+
+if (!localStorage.getItem(KEY_SYSPROMPT)) localStorage.setItem(KEY_SYSPROMPT, DEFAULT_SYSPROMPT);
+if (localStorage.getItem(KEY_FULLSCREEN)) setFullscreen(true);
+document.getElementById("steerInput").value = localStorage.getItem(KEY_STEERING) || "";
+setSteerVisual(document.getElementById("steerInput").value);
+render();
+</script>
+</body>
+</html>

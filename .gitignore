@@ -8,3 +8,8 @@ steering.txt
 state.json
 __pycache__/
 *.pyc
+
+# rescued browser localStorage dumps: keep merged/, drop intermediates
+webgl/programs/firefox/
+webgl/programs/chrome/
+webgl/programs/_chrome_ldb_copy/

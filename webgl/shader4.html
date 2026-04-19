@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>GPU Show / scenes v4</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0d1117;color:#e6edf3;font:14px/1.5 'JetBrains Mono',Consolas,monospace;padding:16px}
+header{display:flex;align-items:center;gap:14px;margin-bottom:16px;flex-wrap:wrap}
+h1{font-size:18px;color:#58a6ff}
+.dot{width:10px;height:10px;border-radius:50%;background:#666;display:inline-block;margin-right:6px}
+.dot.live{background:#3fb950;box-shadow:0 0 8px #3fb950}
+.btn{background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:6px 16px;border-radius:6px;cursor:pointer;font:13px monospace}
+.btn:hover{background:#30363d}
+.btn.go{background:#238636;border-color:#2ea043}
+.btn.stop{background:#a40e26;border-color:#da3633}
+.status{color:#8b949e;font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden;position:relative}
+.copy-btn{position:absolute;bottom:8px;right:8px;background:rgba(13,17,23,0.85);border:1px solid #30363d;color:#8b949e;padding:4px 10px;border-radius:4px;font:11px monospace;cursor:pointer;z-index:2;opacity:0.7}
+.copy-btn:hover{opacity:1;background:#21262d;color:#e6edf3}
+.copy-btn.done{color:#3fb950;opacity:1}
+.card canvas{width:100%;display:block;background:#000;aspect-ratio:1/1;image-rendering:pixelated}
+.meta{padding:10px 12px;font-size:12px}
+.meta .name{font-size:14px;color:#58a6ff;font-weight:bold;margin-bottom:4px}
+.meta .stats{color:#8b949e;display:flex;gap:10px;flex-wrap:wrap}
+.meta .spec{color:#8b949e;font-size:11px;margin:4px 0 6px;font-style:italic;line-height:1.4;max-height:48px;overflow:hidden}
+.empty{color:#6e7681;text-align:center;padding:60px;grid-column:1/-1}
+.steer{display:flex;align-items:center;gap:8px;margin-bottom:10px;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:8px 12px}
+.steer.active{border-color:#bc8cff;box-shadow:0 0 0 1px #bc8cff inset}
+.steer label{color:#8b949e;font-size:12px}
+.steer input{flex:1;background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:6px 10px;border-radius:6px;font:13px monospace;outline:none}
+.steer input:focus{border-color:#58a6ff}
+.steer.active label{color:#bc8cff}
+.live{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:12px;color:#8b949e;display:flex;gap:14px;align-items:center;flex-wrap:wrap;min-height:34px}
+.live .stage{font-weight:bold;color:#58a6ff;text-transform:uppercase;font-size:11px;letter-spacing:0.5px}
+.live .stage.gen{color:#bc8cff}
+.live .stage.exec{color:#3fb950}
+.live .stage.idle{color:#6e7681}
+.live .stage.err{color:#f85149}
+.live .pill{background:#0d1117;border:1px solid #30363d;border-radius:12px;padding:2px 10px;font-size:11px}
+.live .pill.steer-pill{border-color:#bc8cff;color:#bc8cff}
+.meta .steer-chip{display:inline-block;background:#0d1117;border:1px solid #bc8cff;color:#bc8cff;font-size:10px;padding:1px 8px;border-radius:10px;margin-top:4px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);align-items:center;justify-content:center;z-index:100}
+.modal.show{display:flex}
+.modal-body{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:18px 22px;width:min(680px,92vw);max-height:86vh;overflow-y:auto}
+.modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.modal-head h2{font-size:16px;color:#58a6ff}
+.modal-row{display:block;margin:14px 0}
+.modal-row > label{color:#8b949e;font-size:12px;display:block;margin-bottom:6px}
+.modal-row.check{display:flex;align-items:center;gap:10px}
+.modal-row.check label{color:#e6edf3;font-size:13px;margin:0}
+.modal-row.check input{width:16px;height:16px;cursor:pointer}
+.modal-row textarea{width:100%;background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:8px 10px;border-radius:6px;font:12px monospace;outline:none;resize:vertical;min-height:340px;line-height:1.5}
+.modal-row textarea:focus{border-color:#58a6ff}
+.modal-row .hint{color:#6e7681;font-size:11px;margin-top:4px;display:block}
+.modal-row .placeholder-chip{display:inline-block;background:#0d1117;border:1px solid #30363d;color:#bc8cff;padding:1px 8px;border-radius:4px;font-size:11px;margin-right:6px}
+body.fullscreen{padding:6px}
+body.fullscreen header,body.fullscreen .steer,body.fullscreen #liveState{display:none}
+.fs-exit{display:none;position:fixed;top:8px;right:8px;z-index:50;background:rgba(13,17,23,0.85);border:1px solid #30363d;color:#e6edf3;padding:6px 12px;border-radius:6px;cursor:pointer;font:13px monospace}
+body.fullscreen .fs-exit{display:block}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/gl-matrix@3.4.3/gl-matrix-min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/twgl.js@5.5.4/dist/5.x/twgl-full.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>GPU Show / scenes v4</h1>
+  <span><span id="dot" class="dot"></span><span id="state" class="status">idle</span></span>
+  <button id="startBtn" class="btn go" onclick="start()">Start</button>
+  <button id="stopBtn" class="btn stop" onclick="stop()">Stop</button>
+  <button class="btn" onclick="clearAll()">Clear</button>
+  <button class="btn" onclick="openSettings()">⚙ Settings</button>
+  <span class="status">show:</span>
+  <select id="limitSel" class="btn" onchange="render()">
+    <option value="6">last 6</option>
+    <option value="12" selected>last 12</option>
+    <option value="24">last 24</option>
+    <option value="50">all (50)</option>
+  </select>
+  <span id="counter" class="status"></span>
+</header>
+<div class="steer">
+  <label>steer theme:</label>
+  <input id="steerInput" type="text" placeholder="e.g. deep sea creatures, brutalist architecture, kitchen tools… (auto-saves)" maxlength="500" oninput="onSteerInput()">
+  <button class="btn" onclick="clearSteering()">×</button>
+  <span id="steerStatus" class="status"></span>
+</div>
+<div id="liveState" class="live"></div>
+<div id="grid" class="grid"></div>
+
+<button class="fs-exit" onclick="setFullscreen(false)">⛶ exit fullscreen</button>
+
+<div id="modal" class="modal" onclick="if(event.target.id==='modal')closeSettings()">
+  <div class="modal-body">
+    <div class="modal-head">
+      <h2>Settings</h2>
+      <button class="btn" onclick="closeSettings()">✕</button>
+    </div>
+    <div class="modal-row check">
+      <input type="checkbox" id="fsCheck" onchange="setFullscreen(this.checked)">
+      <label for="fsCheck">Fullscreen mode (hides header, steering, status)</label>
+    </div>
+    <div class="modal-row">
+      <label>System prompt — the full instruction set. Placeholders:</label>
+      <div style="margin-bottom:6px">
+        <span class="placeholder-chip">{{STEERING}}</span>
+        <span class="placeholder-chip">{{STEERING_BLOCK}}</span>
+      </div>
+      <textarea id="sysPromptInput" oninput="onSysPromptInput()"></textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+        <span id="sysPromptStatus" class="hint"></span>
+        <button class="btn" onclick="resetSysPrompt()" style="font-size:11px">↺ reset to default</button>
+      </div>
+    </div>
+    <div class="modal-row">
+      <span class="hint">Scene JS runs via new Function in your browser. Press ESC to close / exit fullscreen.</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = "http://10.141.207.1:8084/v1/chat/completions";
+const KEY_ENTRIES = "gpushow_shader4_entries";
+const KEY_STEERING = "gpushow_shader4_steering";
+const KEY_SYSPROMPT = "gpushow_shader4_sysprompt";
+const KEY_FULLSCREEN = "gpushow_shader4_fullscreen";
+
+const DEFAULT_SYSPROMPT = `Here is the topic to generate: {{STEERING_BLOCK}}
+Follow this prompt closely.
+
+You are a 3D scene director with taste for bold, visually striking, structurally specific work. Avoid lazy outputs: a single rotating cube, random floating shapes, abstract ambient geometry with no subject. Every piece must depict a SPECIFIC, recognizable subject.
+
+TASK (single reply, no preamble):
+
+STEP 1. Invent a SPECIFIC subject from ANY field — history, cooking, sports, law, fashion, plumbing, biology, mythology, anything. Be surprising, not math/fractals/physics.
+
+STEP 2. Pick a rendering style (examples: PS1 low-poly, N64 flat-shaded, voxel, toon with hard outlines, blueprint wireframe, exploded technical diagram, clay stop-motion, orthographic diorama, retro outrun, stained glass — or your own).
+
+STEP 3. Write a FRAGBODY (GLSL fragment shader body) and a SCENE (JavaScript scene function body).
+
+THE HARNESS HANDLES EVERYTHING HEAVY FOR YOU:
+- A fixed vertex shader that projects positions and passes v_worldPos, v_normal, v_baseColor to the fragment shader.
+- A single pre-compiled program that uses your FRAGBODY.
+- Pre-built primitives: cube, sphere, torus, cylinder, cone, plane (all centered at origin, roughly unit size).
+- Camera with preset modes: orbit, front, top-down, side, dolly, crane, isometric. You pick one via state.cameraMode.
+- Perspective or orthographic projection. You pick via state.projection.
+- Depth test, clear, and per-frame dispatch.
+- mat4 and vec3 gl-matrix modules (fully loaded).
+
+YOU WRITE TWO SMALL BLOCKS:
+
+(1) FRAGBODY — the body of void main() in the fragment shader. These variables are ALREADY declared and in scope, do NOT redeclare:
+        in vec3 v_worldPos;   // world-space pixel position
+        in vec3 v_normal;     // world-space surface normal — normalize before using
+        in vec3 v_baseColor;  // per-draw RGB color from your scene draws[i].color
+        uniform float u_time; // seconds
+        out vec4 fragColor;   // your output
+    Do NOT write #version, precision, in/out declarations, or void main() — the harness adds all of that. Just write the BODY of main(). Set fragColor. Do NOT redeclare v_worldPos, v_normal, v_baseColor, u_time, or fragColor.
+
+(2) SCENE — the BODY (no wrapper) of a function invoked each frame as sceneFn(t, mat4, vec3, state). Populate state by mutating it. Do NOT write "function(t, mat4, vec3, state) { ... }" yourself — the harness wraps your code. Just write statements.
+    IMPORTANT: In SCENE, time is the JS variable t (a plain number in seconds). Do NOT use u_time — that is a GLSL uniform only available in FRAGBODY, not in JavaScript.
+
+Expected fields of state:
+    state.draws      — array. push a plain object for each thing to draw this frame.
+    state.bg         — [r,g,b] background color (optional, default black).
+    state.cameraMode — string, pick ONE (optional, default "orbit"):
+        "orbit"      — slow 360 orbit around origin over 30s (the default)
+        "front"      — static front view from (0, 0, 5)
+        "top-down"   — static bird's-eye view looking straight down
+        "side"       — static side view from (5, 0, 0)
+        "dolly"      — slow dolly in/out over 30s
+        "crane"      — slow vertical crane rise/fall over 30s
+        "isometric"  — fixed isometric angle with orthographic projection
+    state.projection — "perspective" (default) or "ortho" (orthographic — good for 2D-ish, blueprint, pixel art, diorama)
+    state.camera     — {eye:[x,y,z], target:[x,y,z], up:[x,y,z]} full manual camera override (overrides cameraMode if eye is set)
+
+Each draw object has these fields (all optional except prim and color):
+    prim   — one of: "cube", "sphere", "torus", "cylinder", "cone", "plane"
+    pos    — [x, y, z] position    (default [0,0,0])
+    rot    — [rx, ry, rz] euler rotations in radians, applied X then Y then Z  (default [0,0,0])
+    scale  — number OR [sx, sy, sz]  (default 1)
+    color  — [r, g, b] in 0..1
+
+Example:
+    state.draws.push({ prim: "cube",   pos: [0, -1, 0], scale: [1.5, 0.2, 1.5], color: [0.4, 0.25, 0.1] });
+    state.draws.push({ prim: "sphere", pos: [0,  0.5, 0], scale: 0.5,            color: [1.0, 0.9, 0.4] });
+    state.draws.push({ prim: "cylinder", pos: [-0.8, 0, 0], rot: [0, 0, Math.PI/2], scale: [0.15, 1.0, 0.15], color: [0.3, 0.3, 0.3] });
+
+DO NOT call mat4.translate, mat4.scale, or mat4.rotate* yourself — the harness builds matrices from pos/rot/scale. (You can still pass a precomputed mat4 as the "m" field if you need one, but it is almost never necessary.) Do NOT return anything. Do NOT call gl.* — the harness owns all drawing.
+
+COMPOSITION:
+- Scenes should have 5–60 draws. A single primitive is lazy; 500 is too many.
+- Use loops to build repetitive structure (rows of columns, ring of objects, stacks).
+- Compose recognizable subjects out of primitives: a chair is a plane (seat) + 4 cylinders (legs) + 4 cylinders (back). A watchtower is a cone (roof) + cylinder (tower) + cube (base).
+- Animate via t. Loop period 30 seconds. Slow, deliberate motion, not a tight spin.
+- Set state.bg to something deliberate and restricted — dark navy, deep burgundy, sepia, etc. Not black by default.
+- VARY the camera mode. Do not always use "orbit" — choose the mode that best fits the subject. A blueprint should be "front" or "isometric" with "ortho". A landscape should be "crane" or "dolly". A diorama should be "isometric". A technical diagram should be "front" or "top-down".
+
+ACTIVE THEME: {{STEERING_BLOCK}}
+
+REPLY EXACTLY (nothing before or after):
+TITLE: <3-6 words>
+SPEC: <one paragraph — what it depicts, motion, palette, mood>
+FRAGBODY:
+\`\`\`glsl
+<body of main() — sets fragColor using v_worldPos, v_normal, v_baseColor, u_time>
+\`\`\`
+SCENE:
+\`\`\`js
+<body of function(t, mat4, vec3, state) — pushes draws to state.draws>
+\`\`\``;
+
+const CAP = 50;
+const RES = 256;
+const MAX_RETRIES = 3;
+const PAGE_LOAD = performance.now();
+
+const FIXED_VS = `#version 300 es
+in vec4 position;
+in vec3 normal;
+uniform mat4 u_viewProj;
+uniform mat4 u_model;
+uniform vec3 u_color;
+out vec3 v_worldPos;
+out vec3 v_normal;
+out vec3 v_baseColor;
+void main() {
+  vec4 world = u_model * position;
+  v_worldPos = world.xyz;
+  v_normal = mat3(u_model) * normal;
+  v_baseColor = u_color;
+  gl_Position = u_viewProj * world;
+}`;
+
+function buildFS(body) {
+  return `#version 300 es
+precision highp float;
+in vec3 v_worldPos;
+in vec3 v_normal;
+in vec3 v_baseColor;
+uniform float u_time;
+out vec4 fragColor;
+void main() {
+${body}
+}`;
+}
+
+let entries = load(KEY_ENTRIES, []);
+let running = false;
+let liveState = {stage:"idle"};
+const animatables = [];
+
+function load(k, dflt) {
+  try { return JSON.parse(localStorage.getItem(k)) || dflt; }
+  catch { return dflt; }
+}
+function save() { localStorage.setItem(KEY_ENTRIES, JSON.stringify(entries)); }
+function escapeHtml(s) {
+  return (s||"").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function substitutePlaceholders(text, {steering}) {
+  const steeringBlock = steering
+    ? `**${steering}** — your subject and scene must clearly and directly depict this theme. Do not drift.`
+    : "(no active theme — invent a surprising subject from any field)";
+  return text
+    .replace(/\{\{STEERING\}\}/g, steering || "(none — pick freely)")
+    .replace(/\{\{STEERING_BLOCK\}\}/g, steeringBlock);
+}
+
+async function chat(messages, {temperature=0.8, max_tokens=1500, system=null} = {}) {
+  const finalMessages = system ? [{role:"system", content: system}, ...messages] : messages;
+  const r = await fetch(API, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      model:"test", messages: finalMessages, temperature, max_tokens,
+      chat_template_kwargs:{enable_thinking:false},
+    }),
+  });
+  if (!r.ok) throw new Error(`http ${r.status}: ${await r.text()}`);
+  const j = await r.json();
+  const choice = j.choices?.[0] || {};
+  const m = choice.message || {};
+  return {
+    text: (m.content || m.reasoning_content || "").trim(),
+    finishReason: choice.finish_reason || "unknown",
+  };
+}
+
+function extractLabeledBlock(text, label) {
+  const labelRe = new RegExp("^\\s*" + label + "\\s*:", "im");
+  const lm = text.match(labelRe);
+  if (!lm) return "";
+  const after = text.slice(lm.index + lm[0].length);
+  const fm = after.match(/```[a-zA-Z+]*\s*\n?([\s\S]+?)\n?```/);
+  return fm ? fm[1].trim() : "";
+}
+
+function parseReply(text) {
+  const titleM = text.match(/TITLE:\s*(.+)/i);
+  const specM  = text.match(/SPEC:\s*([\s\S]+?)(?=\n\s*FRAGBODY:|\n\s*SCENE:|\n\s*```)/i);
+  return {
+    title: (titleM?.[1] || "untitled").trim().slice(0, 80),
+    spec:  (specM?.[1]  || "").trim().slice(0, 400),
+    fragBody: extractLabeledBlock(text, "FRAGBODY"),
+    scene:    extractLabeledBlock(text, "SCENE"),
+  };
+}
+
+function buildPrimitives(gl) {
+  const p = twgl.primitives;
+  return {
+    cube:     twgl.createBufferInfoFromArrays(gl, p.createCubeVertices(1.0)),
+    sphere:   twgl.createBufferInfoFromArrays(gl, p.createSphereVertices(0.5, 16, 12)),
+    torus:    twgl.createBufferInfoFromArrays(gl, p.createTorusVertices(0.4, 0.15, 20, 12)),
+    cylinder: twgl.createBufferInfoFromArrays(gl, p.createCylinderVertices(0.3, 1.0, 16, 1)),
+    cone:     twgl.createBufferInfoFromArrays(gl, p.createTruncatedConeVertices(0.5, 0.0, 1.0, 16, 1)),
+    plane:    twgl.createBufferInfoFromArrays(gl, p.createPlaneVertices(2.0, 2.0)),
+  };
+}
+
+function tryInstantiate(canvas, parsed) {
+  const gl = canvas.getContext("webgl2", {antialias:false, preserveDrawingBuffer:false});
+  if (!gl) return {ok:false, err:"webgl2 not available"};
+  if (!parsed.fragBody) return {ok:false, err:"missing FRAGBODY block (need a fenced glsl block labeled FRAGBODY)"};
+  if (!parsed.scene)    return {ok:false, err:"missing SCENE block (need a fenced js block labeled SCENE)"};
+
+  let compileErr = "";
+  const programInfo = window.twgl.createProgramInfo(gl, [FIXED_VS, buildFS(parsed.fragBody)], {
+    errorCallback: (e) => { compileErr = e; }
+  });
+  if (!programInfo) {
+    return {ok:false, err:"fragment shader compile failed — the harness wraps your FRAGBODY inside void main(){...}. Error:\n" + (compileErr || "(no details)")};
+  }
+
+  let prims;
+  try { prims = buildPrimitives(gl); }
+  catch (e) { return {ok:false, err:"primitive build failed: " + (e.message || String(e))}; }
+
+  let sceneFn;
+  const wrapScene = (code) => {
+    const cleaned = code.replace(/^\s*(const|let|var)\s+t\s*=\s*(t|__t)\s*;?\s*$/m, '');
+    return new Function('__t', 'mat4', 'vec3', 'state',
+      '(function(t){\n' + cleaned + '\n})(__t);');
+  };
+  try {
+    sceneFn = wrapScene(parsed.scene);
+  } catch (e) {
+    try {
+      const stripped = parsed.scene.replace(/^\s*function\s*\([\s\S]*?\)\s*\{/, '').replace(/\}\s*$/, '');
+      sceneFn = wrapScene(stripped);
+    } catch (e2) {
+      return {ok:false, err:"scene function syntax error: " + (e2.message || String(e2))};
+    }
+  }
+
+  const m4 = window.glMatrix.mat4;
+  const v3 = window.glMatrix.vec3;
+  const perspProj = m4.create();
+  m4.perspective(perspProj, 60 * Math.PI / 180, 1.0, 0.1, 100);
+  const orthoProj = m4.create();
+  m4.ortho(orthoProj, -3, 3, -3, 3, 0.1, 100);
+  const view = m4.create();
+  const viewProj = m4.create();
+
+  function computeCamera(t, state) {
+    const mode = (state.cameraMode || "orbit").toLowerCase();
+    const projection = (state.projection || "perspective") === "ortho" ? orthoProj : perspProj;
+    const target = (state.camera && state.camera.target) || [0, 0, 0];
+    const up = (state.camera && state.camera.up) || [0, 1, 0];
+
+    if (state.camera && state.camera.eye) {
+      m4.lookAt(view, state.camera.eye, target, up);
+    } else if (mode === "front") {
+      m4.lookAt(view, [0, 0, 5], target, up);
+    } else if (mode === "top-down") {
+      m4.lookAt(view, [0, 6, 0.01], target, [0, 0, -1]);
+    } else if (mode === "side") {
+      m4.lookAt(view, [5, 0, 0], target, up);
+    } else if (mode === "dolly") {
+      const d = 3.5 + 1.5 * Math.sin(t / 30 * Math.PI * 2);
+      m4.lookAt(view, [0, 1.5, d], target, up);
+    } else if (mode === "crane") {
+      const h = 1.0 + 3.0 * (0.5 + 0.5 * Math.sin(t / 30 * Math.PI * 2));
+      m4.lookAt(view, [3, h, 3], target, up);
+    } else if (mode === "isometric") {
+      m4.lookAt(view, [4, 4, 4], target, up);
+      m4.multiply(viewProj, orthoProj, view);
+      return;
+    } else {
+      const a = (t / 30) * Math.PI * 2;
+      m4.lookAt(view, [Math.cos(a)*4.0, 1.8, Math.sin(a)*4.0], target, up);
+    }
+    m4.multiply(viewProj, projection, view);
+  }
+
+  const draw = function(t) {
+    const state = {draws: [], bg: null, camera: null, cameraMode: null, projection: null};
+    try { sceneFn(t, m4, v3, state); }
+    catch (e) { throw new Error("scene threw at t="+t+": " + (e.message || String(e))); }
+
+    computeCamera(t, state);
+
+    const bg = state.bg || [0,0,0];
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.enable(gl.DEPTH_TEST);
+    gl.clearColor(bg[0], bg[1], bg[2], 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    gl.useProgram(programInfo.program);
+    twgl.setUniforms(programInfo, {u_viewProj: viewProj, u_time: t});
+
+    for (const d of state.draws) {
+      if (!d || typeof d !== 'object') continue;
+      const bufInfo = prims[d.prim];
+      if (!bufInfo) continue;
+      let mm = d.m;
+      if (!mm) {
+        mm = m4.create();
+        if (d.pos) m4.translate(mm, mm, d.pos);
+        if (d.rot) {
+          if (d.rot[0]) m4.rotateX(mm, mm, d.rot[0]);
+          if (d.rot[1]) m4.rotateY(mm, mm, d.rot[1]);
+          if (d.rot[2]) m4.rotateZ(mm, mm, d.rot[2]);
+        }
+        if (d.scale !== undefined) {
+          const s = Array.isArray(d.scale) ? d.scale : [d.scale, d.scale, d.scale];
+          m4.scale(mm, mm, s);
+        }
+      }
+      const col = d.color || [1,1,1];
+      twgl.setBuffersAndAttributes(gl, programInfo, bufInfo);
+      twgl.setUniforms(programInfo, {u_model: mm, u_color: col});
+      twgl.drawBufferInfo(gl, bufInfo);
+    }
+  };
+
+  try { draw(0); }
+  catch (e) { return {ok:false, err:(e.message || String(e))}; }
+
+  return {ok:true, gl, draw};
+}
+
+function tick() {
+  const t = (performance.now() - PAGE_LOAD) / 1000;
+  for (let i = animatables.length - 1; i >= 0; i--) {
+    const a = animatables[i];
+    try { a.draw(t); }
+    catch (e) { console.warn("draw threw at runtime, dropping:", e); animatables.splice(i, 1); }
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+function setLive(stage, extras={}) {
+  liveState = {stage, ...extras};
+  renderLive();
+}
+function renderLive() {
+  const el = document.getElementById("liveState");
+  const stages = {
+    idle:["✓ ready","idle"],
+    inventing:["🧠 inventing","gen"],
+    building:["⚙ building","exec"],
+    error:["⚠ error","err"],
+    stopped:["stopped","idle"],
+  };
+  const [label, cls] = stages[liveState.stage] || [liveState.stage, "idle"];
+  let extras = "";
+  if (liveState.title) extras += `<span class="pill">${escapeHtml(liveState.title)}</span>`;
+  const steer = localStorage.getItem(KEY_STEERING) || "";
+  if (running && steer) extras += `<span class="pill steer-pill">↗ ${escapeHtml(steer)}</span>`;
+  if (liveState.attempt) extras += `<span class="pill">retry ${liveState.attempt}/${MAX_RETRIES}</span>`;
+  if (liveState.error) extras += `<span class="pill" style="color:#f85149">${escapeHtml(String(liveState.error).slice(0,80))}</span>`;
+  el.innerHTML = `<span class="stage ${cls}">${label}</span>${extras}`;
+}
+
+function render() {
+  document.getElementById("dot").className = "dot" + (running ? " live" : "");
+  document.getElementById("state").textContent = running ? "running" : "idle";
+  renderLive();
+  const limit = parseInt(document.getElementById("limitSel").value);
+  const grid = document.getElementById("grid");
+  document.getElementById("counter").textContent = `${entries.length} stored`;
+  animatables.length = 0;
+  grid.innerHTML = "";
+  if (!entries.length) {
+    grid.innerHTML = '<div class="empty">No scenes yet — click Start to begin.</div>';
+    return;
+  }
+  for (const e of entries.slice(0, limit)) {
+    const card = document.createElement("div");
+    card.className = "card";
+    const date = new Date(e.ts*1000).toLocaleTimeString();
+    const steerChip = e.steering ? `<div><span class="steer-chip" title="steered: ${escapeHtml(e.steering)}">↗ ${escapeHtml(e.steering)}</span></div>` : "";
+    card.innerHTML = `
+      <canvas width="${RES}" height="${RES}"></canvas>
+      <div class="meta">
+        <div class="name">${escapeHtml(e.title)}</div>
+        ${steerChip}
+        <div class="spec">${escapeHtml(e.spec)}</div>
+        <div class="stats">
+          <span>${e.retries||0} retries</span>
+          <span>${((e.fragBody||"").length + (e.scene||"").length)} chars</span>
+          <span>${date}</span>
+        </div>
+      </div>
+      <button class="copy-btn" onclick="copyEntry(${e.id}, this)">copy</button>`;
+    grid.appendChild(card);
+    const canvas = card.querySelector("canvas");
+    const r = tryInstantiate(canvas, e);
+    if (r.ok) animatables.push(r);
+  }
+}
+
+async function generateOne() {
+  const steering = localStorage.getItem(KEY_STEERING) || "";
+  const rawSys = localStorage.getItem(KEY_SYSPROMPT) || DEFAULT_SYSPROMPT;
+  const sys = substitutePlaceholders(rawSys, {steering});
+
+  setLive("inventing");
+  const messages = [{role:"user", content: "Generate the next piece now, following your system instructions."}];
+  let resp = await chat(messages, {temperature:1.05, max_tokens:2800, system: sys});
+  let parsed = parseReply(resp.text);
+  let attempt = 0;
+  while (true) {
+    setLive("building", {title: parsed.title, attempt});
+    const probe = document.createElement("canvas");
+    probe.width = probe.height = RES;
+    const r = tryInstantiate(probe, parsed);
+    if (r.ok) {
+      entries.unshift({
+        id: Date.now(), ts: Math.floor(Date.now()/1000),
+        title: parsed.title, spec: parsed.spec,
+        fragBody: parsed.fragBody, scene: parsed.scene,
+        steering, retries: attempt,
+      });
+      entries = entries.slice(0, CAP);
+      save(); render(); return;
+    }
+    let err = r.err;
+    if (resp.finishReason === "length") {
+      err = "your previous reply was cut off at max_tokens. Both FRAGBODY and SCENE must fit — keep FRAGBODY under 40 lines and SCENE under 80 lines. Skip comments.";
+    }
+    attempt++;
+    if (attempt > MAX_RETRIES) break;
+    setLive("building", {title: parsed.title || "retry", attempt, error: err});
+    messages.push({role:"assistant", content: resp.text});
+    messages.push({role:"user", content: `Your scene failed with this error:\n${err}\n\nFix it and reply again in the exact TITLE/SPEC/FRAGBODY/SCENE format with two fenced blocks. Keep the same title and spec if they still fit.`});
+    resp = await chat(messages, {temperature:0.7, max_tokens:2800, system: sys});
+    parsed = parseReply(resp.text);
+  }
+  console.warn("gave up after", attempt, "attempts on:", parsed.title || "(no title)");
+  setLive("error", {title: parsed.title || "dropped", error: "dropped after "+attempt+" attempts"});
+}
+
+async function loop() {
+  while (running) {
+    try { await generateOne(); }
+    catch (e) {
+      console.error(e);
+      setLive("error", {error: String(e)});
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }
+  setLive("stopped");
+}
+
+function start() {
+  if (running) return;
+  running = true;
+  render();
+  loop();
+}
+function stop() { running = false; render(); }
+function clearAll() {
+  if (!confirm("Clear all stored scenes?")) return;
+  entries = []; save(); render();
+}
+
+function setSteerVisual(text, label) {
+  const box = document.querySelector(".steer");
+  const st = document.getElementById("steerStatus");
+  if (text.trim()) {
+    box.classList.add("active");
+    st.textContent = label || "↗ active — drives the next piece";
+  } else {
+    box.classList.remove("active");
+    st.textContent = label || "";
+  }
+}
+let steerTimer = null;
+function onSteerInput() {
+  if (steerTimer) clearTimeout(steerTimer);
+  setSteerVisual(document.getElementById("steerInput").value, "typing…");
+  steerTimer = setTimeout(saveSteering, 600);
+}
+function saveSteering() {
+  const text = document.getElementById("steerInput").value;
+  localStorage.setItem(KEY_STEERING, text);
+  setSteerVisual(text, text.trim() ? "✓ saved — drives next piece" : "✓ cleared");
+  setTimeout(() => setSteerVisual(text), 2500);
+}
+function clearSteering() {
+  document.getElementById("steerInput").value = "";
+  saveSteering();
+}
+
+async function copyEntry(id, btn) {
+  const e = entries.find(x => x.id === id);
+  if (!e) return;
+  const payload = `FRAGBODY:\n\`\`\`glsl\n${e.fragBody||""}\n\`\`\`\n\nSCENE:\n\`\`\`js\n${e.scene||""}\n\`\`\`\n`;
+  try {
+    await navigator.clipboard.writeText(payload);
+    btn.textContent = "✓ copied";
+    btn.classList.add("done");
+  } catch {
+    btn.textContent = "failed";
+  }
+  setTimeout(() => { btn.textContent = "copy"; btn.classList.remove("done"); }, 1200);
+}
+
+function openSettings() {
+  document.getElementById("fsCheck").checked = document.body.classList.contains("fullscreen");
+  document.getElementById("sysPromptInput").value = localStorage.getItem(KEY_SYSPROMPT) || "";
+  document.getElementById("sysPromptStatus").textContent = "";
+  document.getElementById("modal").classList.add("show");
+}
+function closeSettings() { document.getElementById("modal").classList.remove("show"); }
+
+function setFullscreen(on) {
+  document.body.classList.toggle("fullscreen", on);
+  localStorage.setItem(KEY_FULLSCREEN, on ? "1" : "");
+  const cb = document.getElementById("fsCheck");
+  if (cb) cb.checked = on;
+}
+
+let sysPromptTimer = null;
+function onSysPromptInput() {
+  if (sysPromptTimer) clearTimeout(sysPromptTimer);
+  document.getElementById("sysPromptStatus").textContent = "typing…";
+  sysPromptTimer = setTimeout(saveSysPrompt, 600);
+}
+function saveSysPrompt() {
+  const text = document.getElementById("sysPromptInput").value;
+  localStorage.setItem(KEY_SYSPROMPT, text);
+  const st = document.getElementById("sysPromptStatus");
+  st.textContent = text.trim() ? "✓ saved — applies to next call" : "✓ cleared";
+  setTimeout(() => { st.textContent = ""; }, 2500);
+}
+function resetSysPrompt() {
+  document.getElementById("sysPromptInput").value = DEFAULT_SYSPROMPT;
+  saveSysPrompt();
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const modal = document.getElementById("modal");
+  if (modal.classList.contains("show")) { closeSettings(); return; }
+  if (document.body.classList.contains("fullscreen")) setFullscreen(false);
+});
+
+if (!localStorage.getItem(KEY_SYSPROMPT)) localStorage.setItem(KEY_SYSPROMPT, DEFAULT_SYSPROMPT);
+if (localStorage.getItem(KEY_FULLSCREEN)) setFullscreen(true);
+document.getElementById("steerInput").value = localStorage.getItem(KEY_STEERING) || "";
+setSteerVisual(document.getElementById("steerInput").value);
+render();
+</script>
+</body>
+</html>

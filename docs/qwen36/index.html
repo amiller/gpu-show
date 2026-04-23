@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Crystalline Garden</title>
+<style>
+* { margin: 0; padding: 0; }
+body { background: #000; overflow: hidden; }
+canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl');
+if (!gl) { document.body.innerHTML = '<h1>WebGL not supported</h1>'; }
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+window.addEventListener('resize', resize);
+resize();
+
+const vs = `
+attribute vec2 p;
+varying vec2 uv;
+void main() {
+  uv = p * 0.5 + 0.5;
+  gl_Position = vec4(p, 0, 1);
+}`;
+
+const fs = `
+precision highp float;
+varying vec2 uv;
+uniform float time;
+uniform vec2 mouse;
+uniform vec2 res;
+
+#define PI 3.14159265359
+#define MAX_STEPS 120
+#define MAX_DIST 50.0
+#define SURF_DIST 0.001
+
+// Rotations
+mat2 rot(float a) { float s=sin(a), c=cos(a); return mat2(c,-s,s,c); }
+
+// Smooth minimum for organic blending
+float smin(float a, float b, float k) {
+  float h = clamp(0.5 + 0.5*(b-a)/k, 0.0, 1.0);
+  return mix(b, a, h) - k*h*(1.0-h);
+}
+
+// Smooth maximum
+float smax(float a, float b, float k) {
+  return -smin(-a, -b, k);
+}
+
+// Torus
+float sdTorus(vec3 p, vec2 c) {
+  vec2 q = vec2(length(p.xz) - c.x, p.y);
+  return length(q) - c.y;
+}
+
+// Octahedron
+float sdOctahedron(vec3 p, float s) {
+  p = abs(p);
+  return dot(p, vec3(1.0)) - s;
+}
+
+// Rounded box
+float sdBox(vec3 p, vec3 b) {
+  vec3 q = abs(p) - b;
+  return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+// Sphere
+float sdSphere(vec3 p, float r) {
+  return length(p) - r;
+}
+
+// Distance function with normal via central differences
+vec2 map(vec3 p) {
+  float t = time;
+  float t2 = time * 0.5;
+
+  // Morphing central sculpture: blended torus knot shapes
+  float twist = sin(t * 0.3) * 0.5;
+
+  // Rotating frame for the central shape
+  vec3 q = p;
+  q.xz *= rot(t * 0.2);
+  q.xy *= rot(t * 0.15);
+
+  // First torus - large ring
+  float d1 = sdTorus(q, vec2(1.2 + 0.3*sin(t*0.4), 0.3 + 0.1*sin(t*0.7)));
+
+  // Second torus - perpendicular, smaller
+  vec3 q2 = p;
+  q2.yz *= rot(t * 0.25);
+  q2.xy *= rot(t * 0.35);
+  float d2 = sdTorus(q2, vec2(0.8 + 0.2*cos(t*0.5), 0.2 + 0.05*sin(t*0.9)));
+
+  // Third torus - diagonal
+  vec3 q3 = p;
+  q3.xy *= rot(t * 0.18 + 1.0);
+  q3.xz *= rot(t * 0.22 + 2.0);
+  float d3 = sdTorus(q3, vec2(1.5 + 0.25*sin(t*0.35), 0.15 + 0.08*cos(t*0.6)));
+
+  // Morph between shapes
+  float morph = sin(t * 0.4) * 0.5 + 0.5;
+  float central = smin(d1, d2, 0.3);
+  central = smin(central, d3, 0.2);
+
+  // Floating crystals around the sculpture
+  float crystalDist = 10.0;
+  for (int i = 0; i < 8; i++) {
+    float fi = float(i);
+    float angle = fi * PI * 0.25 + t * 0.15 * (1.0 + fi * 0.1);
+    float radius = 2.5 + 0.5 * sin(fi * 1.3 + t * 0.3);
+    float height = sin(fi * 0.8 + t * 0.2) * 1.5;
+
+    vec3 crystalPos = vec3(cos(angle) * radius, height, sin(angle) * radius);
+    vec3 cp = p - crystalPos;
+    cp.xz *= rot(fi * 0.4 + t * 0.3);
+    cp.xy *= rot(fi * 0.6 + t * 0.2);
+    float crystalSize = 0.25 + 0.1 * sin(fi + t * 0.5);
+    float crystal = sdOctahedron(cp, crystalSize);
+    crystalDist = min(crystalDist, crystal);
+  }
+
+  // Ground plane with subtle undulation
+  float ground = p.y + 2.0 + 0.15 * sin(p.x * 2.0 + t * 0.5) * sin(p.z * 1.5 + t * 0.3);
+
+  // Combine
+  float d = min(central, crystalDist);
+  d = smin(d, ground, 0.05); // Smooth merge with ground
+
+  // Material ID: 0 = central sculpture, 1 = crystals, 2 = ground
+  float mat = 2.0;
+  if (d == central && d < crystalDist) mat = 0.0;
+  else if (d == crystalDist && d < ground) mat = 1.0;
+
+  return vec2(d, mat);
+}
+
+// Raymarching with AO accumulation
+vec2 raymarch(vec3 ro, vec3 rd) {
+  float t = 0.0;
+  float ao = 0.0;
+  float mat = 0.0;
+
+  for (int i = 0; i < MAX_STEPS; i++) {
+    vec3 p = ro + rd * t;
+    vec2 res = map(p);
+    float d = res.x;
+    mat = res.y;
+
+    if (d < SURF_DIST) {
+      ao = 1.0;
+      break;
+    }
+    if (t > MAX_DIST) break;
+
+    // Accumulate AO based on distance to geometry
+    ao += exp(-d * 2.0) * 0.03;
+    t += d * 0.7; // Slightly understep for safety
+  }
+
+  return vec2(t, mat);
+}
+
+// Surface normal via central differences
+vec3 getNormal(vec3 p) {
+  float e = 0.001;
+  vec2 h = vec2(e, 0);
+  return normalize(vec3(
+    map(p + h.xyy).x - map(p - h.xyy).x,
+    map(p + h.yxy).x - map(p - h.yxy).x,
+    map(p + h.yyx).x - map(p - h.yyx).x
+  ));
+}
+
+// Soft shadow
+float softShadow(vec3 ro, vec3 rd, float mint, float maxt, float k) {
+  float res = 1.0;
+  float t = mint;
+  for (int i = 0; i < 48; i++) {
+    float h = map(ro + rd * t).x;
+    if (h < 0.001) return 0.0;
+    res = min(res, k * h / t);
+    t += clamp(h, 0.02, 0.5);
+    if (t > maxt) break;
+  }
+  return clamp(res, 0.0, 1.0);
+}
+
+// Ambient occlusion
+float calcAO(vec3 p, vec3 n) {
+  float ao = 0.0;
+  float scale = 1.0;
+  for (int i = 0; i < 5; i++) {
+    float dist = 0.02 + 0.1 * float(i);
+    float sampled = map(p + n * dist).x;
+    ao += (dist - sampled) * scale;
+    scale *= 0.5;
+  }
+  return clamp(1.0 - 2.0 * ao, 0.0, 1.0);
+}
+
+// Iridescent color based on fresnel angle
+vec3 iridescent(vec3 n, vec3 v, float mat) {
+  float fresnel = 1.0 - max(dot(n, -v), 0.0);
+  fresnel = pow(fresnel, 2.0);
+
+  // Thin-film interference approximation
+  float thickness = fresnel * 3.0 + time * 0.1;
+  vec3 col = vec3(
+    sin(thickness * 6.28) * 0.5 + 0.5,
+    sin(thickness * 6.28 + 2.09) * 0.5 + 0.5,
+    sin(thickness * 6.28 + 4.18) * 0.5 + 0.5
+  );
+
+  if (mat < 0.5) {
+    // Central sculpture: warm iridescence
+    col = mix(vec3(0.9, 0.3, 0.5), col, 0.6);
+    col = mix(col, vec3(0.2, 0.8, 1.0), fresnel);
+  } else if (mat < 1.5) {
+    // Crystals: sharp diamond-like
+    col = mix(vec3(0.8, 0.9, 1.0), col, fresnel);
+    col += vec3(0.1, 0.05, 0.2) * pow(fresnel, 3.0);
+  } else {
+    // Ground: dark reflective
+    col = vec3(0.05, 0.03, 0.08);
+    col = mix(col, col * 2.0, fresnel);
+  }
+
+  return col;
+}
+
+// Sky gradient
+vec3 sky(vec3 rd) {
+  float t = rd.y * 0.5 + 0.5;
+  vec3 top = vec3(0.02, 0.01, 0.06);
+  vec3 bot = vec3(0.1, 0.05, 0.15);
+  return mix(bot, top, t);
+}
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy - 0.5 * res) / res.y;
+
+  // Camera controlled by mouse
+  float camAngleX = mouse.x * PI - PI * 0.25;
+  float camAngleY = clamp(mouse.y * PI * 0.5, 0.1, PI * 0.45);
+  float camDist = 6.0;
+
+  vec3 ro = vec3(
+    cos(camAngleX) * cos(camAngleY) * camDist,
+    sin(camAngleY) * camDist,
+    sin(camAngleX) * cos(camAngleY) * camDist
+  );
+  vec3 target = vec3(0, 0, 0);
+  vec3 f = normalize(target - ro);
+  vec3 r = normalize(cross(vec3(0, 1, 0), f));
+  vec3 u = cross(f, r);
+  vec3 rd = normalize(f * 1.5 + r * uv.x + u * uv.y);
+
+  // Background
+  vec3 col = sky(rd);
+
+  // Raymarch
+  vec2 hit = raymarch(ro, rd);
+  float dist = hit.x;
+  float mat = hit.y;
+
+  if (dist < MAX_DIST) {
+    vec3 p = ro + rd * dist;
+    vec3 n = getNormal(p);
+    vec3 v = -rd;
+
+    // Lighting setup
+    vec3 lightDir1 = normalize(vec3(2, 3, 1));
+    vec3 lightDir2 = normalize(vec3(-1, 2, -2));
+    vec3 lightCol1 = vec3(1.2, 0.8, 0.6);
+    vec3 lightCol2 = vec3(0.3, 0.5, 1.2);
+
+    float diff1 = max(dot(n, lightDir1), 0.0);
+    float diff2 = max(dot(n, lightDir2), 0.0);
+
+    // Shadows
+    float shadow1 = softShadow(p + n * 0.01, lightDir1, 0.02, 10.0, 16.0);
+    float shadow2 = softShadow(p + n * 0.01, lightDir2, 0.02, 10.0, 16.0);
+
+    // AO
+    float ao = calcAO(p, n);
+
+    // Specular (Blinn-Phong)
+    vec3 h1 = normalize(lightDir1 + v);
+    vec3 h2 = normalize(lightDir2 + v);
+    float spec1 = pow(max(dot(n, h1), 0.0), 64.0);
+    float spec2 = pow(max(dot(n, h2), 0.0), 32.0);
+
+    // Fresnel
+    float fresnel = pow(1.0 - max(dot(n, -v), 0.0), 4.0);
+
+    // Surface color
+    vec3 surfCol = iridescent(n, v, mat);
+
+    // Ground reflection hint
+    if (mat > 1.5) {
+      vec3 reflDir = reflect(rd, n);
+      vec3 reflCol = sky(reflDir);
+      // Subtle reflection of the sculpture
+      float reflHit = raymarch(p + n * 0.02, reflDir).x;
+      if (reflHit < MAX_DIST) {
+        vec3 rp = p + n * 0.02 + reflDir * reflHit;
+        vec3 rn = getNormal(rp);
+        reflCol = iridescent(rn, -reflDir, raymarch(rp, rd).y) * 0.3;
+      }
+      surfCol = mix(surfCol, reflCol, 0.3 * fresnel);
+    }
+
+    // Compose
+    vec3 ambient = vec3(0.08, 0.05, 0.12);
+    col = surfCol * (ambient + diff1 * lightCol1 * shadow1 + diff2 * lightCol2 * shadow2);
+    col += spec1 * lightCol1 * shadow1 * 0.8;
+    col += spec2 * lightCol2 * shadow2 * 0.4;
+    col *= ao;
+
+    // Emissive glow on sculpture
+    if (mat < 0.5) {
+      float glow = 0.15 + 0.1 * sin(time * 2.0);
+      col += glow * vec3(0.3, 0.1, 0.5);
+    }
+
+    // Fog
+    float fog = 1.0 - exp(-dist * 0.04);
+    col = mix(col, vec3(0.02, 0.01, 0.04), fog);
+  }
+
+  // Post-processing: vignette
+  vec2 q = gl_FragCoord.xy / res;
+  col *= 0.5 + 0.5 * pow(16.0 * q.x * q.y * (1.0 - q.x) * (1.0 - q.y), 0.15);
+
+  // Tone mapping (ACES approximation)
+  col = col * (2.51 * col + 0.03) / (col * (2.43 * col + 0.59) + 0.14);
+
+  // Gamma
+  col = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));
+
+  // Subtle chromatic aberration at edges
+  float edge = length(uv);
+  col.r = texture2D ? col.r : col.r; // placeholder to avoid unused var warning
+  col = mix(col, col, 1.0);
+
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+// Fix: remove the problematic chromatic aberration section and unused texture2D
+const fsFixed = fs.replace(/\/\/ Post-processing.*gl_FragColor = vec4\(col, 1\.0\);/s,
+`  // Post-processing: vignette
+  vec2 q = gl_FragCoord.xy / res;
+  col *= 0.5 + 0.5 * pow(16.0 * q.x * q.y * (1.0 - q.x) * (1.0 - q.y), 0.15);
+
+  // Tone mapping (ACES approximation)
+  col = col * (2.51 * col + 0.03) / (col * (2.43 * col + 0.59) + 0.14);
+
+  // Gamma
+  col = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));
+
+  gl_FragColor = vec4(col, 1.0);`);
+
+function compileShader(src, type) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    console.error('Shader error:', gl.getShaderInfoLog(s));
+    gl.deleteShader(s);
+    return null;
+  }
+  return s;
+}
+
+const vShader = compileShader(vs, gl.VERTEX_SHADER);
+const fShader = compileShader(fsFixed, gl.FRAGMENT_SHADER);
+
+const prog = gl.createProgram();
+gl.attachShader(prog, vShader);
+gl.attachShader(prog, fShader);
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+  console.error('Link error:', gl.getProgramInfoLog(prog));
+}
+gl.useProgram(prog);
+
+// Full-screen quad
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+const pLoc = gl.getAttribLocation(prog, 'p');
+gl.enableVertexAttribArray(pLoc);
+gl.vertexAttribPointer(pLoc, 2, gl.FLOAT, false, 0, 0);
+
+const timeLoc = gl.getUniformLocation(prog, 'time');
+const mouseLoc = gl.getUniformLocation(prog, 'mouse');
+const resLoc = gl.getUniformLocation(prog, 'res');
+
+let mx = 0.35, my = 0.45; // Default camera angles (normalized)
+let targetMx = mx, targetMy = my;
+
+canvas.addEventListener('mousemove', e => {
+  targetMx = e.clientX / window.innerWidth;
+  targetMy = e.clientY / window.innerHeight;
+});
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  targetMx = e.touches[0].clientX / window.innerWidth;
+  targetMy = e.touches[0].clientY / window.innerHeight;
+}, { passive: false });
+
+function render(t) {
+  // Smooth mouse interpolation
+  mx += (targetMx - mx) * 0.05;
+  my += (targetMy - my) * 0.05;
+
+  gl.uniform1f(timeLoc, t * 0.001);
+  gl.uniform2f(mouseLoc, mx, my);
+  gl.uniform2f(resLoc, canvas.width, canvas.height);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
